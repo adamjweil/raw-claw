@@ -224,7 +224,9 @@ export const ClawHubBrowser: React.FC<ClawHubBrowserProps> = ({
               )}
               <Ionicons
                 name={
-                  (skill.icon as keyof typeof Ionicons.glyphMap) || 'extension-puzzle'
+                  skill.icon && (skill.icon as string) in Ionicons.glyphMap
+                    ? (skill.icon as keyof typeof Ionicons.glyphMap)
+                    : 'extension-puzzle'
                 }
                 size={26}
                 color={colors.accent}

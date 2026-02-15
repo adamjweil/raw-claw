@@ -7,6 +7,7 @@ import {
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ActivityIndicator,
 } from 'react-native';
@@ -293,84 +294,96 @@ export default function Chat() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top']}>
-      {/* Header */}
-      <View style={[styles.header, { padding: spacing.lg, paddingBottom: spacing.sm + 2 }]}>
-        <Text
-          style={[
-            styles.title,
-            {
-              color: colors.text,
-              fontSize: typography.title.fontSize,
-              fontWeight: typography.title.fontWeight,
-            },
-          ]}
-        >
-          Chat
-        </Text>
-        <View style={styles.headerRight}>
-          <Pressable onPress={() => setShowSearch(true)} hitSlop={8} style={{ marginRight: spacing.md }}>
-            <Ionicons name="search" size={22} color={colors.textSecondary} />
-          </Pressable>
-          <View
-            style={[
-              styles.dot,
-              { backgroundColor: state.connected ? colors.success : colors.error },
-            ]}
-          />
-        </View>
-      </View>
-
-      {/* Session tabs */}
-      {sessions.length > 0 && (
-        <SessionTabs
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={selectSession}
-          onCreateSession={createSession}
-          onRenameSession={renameSession}
-          onDeleteSession={deleteSession}
-        />
-      )}
-
-      {/* Filter pills */}
-      <View style={[styles.filterRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}>
-        {FILTER_OPTIONS.map((opt) => {
-          const isActive = activeFilter === opt.key;
-          return (
-            <Pressable
-              key={opt.key}
-              onPress={() => setActiveFilter(opt.key)}
-              style={[
-                styles.filterPill,
-                {
-                  backgroundColor: isActive ? colors.accent + '22' : colors.surface,
-                  borderRadius: radius.full,
-                  paddingHorizontal: spacing.md,
-                  paddingVertical: spacing.xs + 2,
-                  borderWidth: isActive ? 1 : 0,
-                  borderColor: colors.accent + '44',
-                },
-              ]}
-            >
-              <Text
-                style={{
-                  color: isActive ? colors.accent : colors.textMuted,
-                  fontSize: typography.small.fontSize,
-                  fontWeight: isActive ? '600' : '400',
-                }}
-              >
-                {opt.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
+        {/* Header */}
+        <View style={[styles.header, { padding: spacing.lg, paddingBottom: spacing.sm + 2 }]}>
+          <View style={styles.headerLeft}>
+            <Pressable
+              onPress={() => {
+                Keyboard.dismiss();
+                router.push('/(tabs)');
+              }}
+              hitSlop={8}
+              style={{ marginRight: spacing.sm }}
+            >
+              <Ionicons name="home-outline" size={22} color={colors.textSecondary} />
+            </Pressable>
+            <Text
+              style={[
+                styles.title,
+                {
+                  color: colors.text,
+                  fontSize: typography.title.fontSize,
+                  fontWeight: typography.title.fontWeight,
+                },
+              ]}
+            >
+              Chat
+            </Text>
+          </View>
+          <View style={styles.headerRight}>
+            <Pressable onPress={() => setShowSearch(true)} hitSlop={8} style={{ marginRight: spacing.md }}>
+              <Ionicons name="search" size={22} color={colors.textSecondary} />
+            </Pressable>
+            <View
+              style={[
+                styles.dot,
+                { backgroundColor: state.connected ? colors.success : colors.error },
+              ]}
+            />
+          </View>
+        </View>
+
+        {/* Session tabs */}
+        {sessions.length > 0 && (
+          <SessionTabs
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={selectSession}
+            onCreateSession={createSession}
+            onRenameSession={renameSession}
+            onDeleteSession={deleteSession}
+          />
+        )}
+
+        {/* Filter pills */}
+        <View style={[styles.filterRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}>
+          {FILTER_OPTIONS.map((opt) => {
+            const isActive = activeFilter === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                onPress={() => setActiveFilter(opt.key)}
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor: isActive ? colors.accent + '22' : colors.surface,
+                    borderRadius: radius.full,
+                    paddingHorizontal: spacing.md,
+                    paddingVertical: spacing.xs + 2,
+                    borderWidth: isActive ? 1 : 0,
+                    borderColor: colors.accent + '44',
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: isActive ? colors.accent : colors.textMuted,
+                    fontSize: typography.small.fontSize,
+                    fontWeight: isActive ? '600' : '400',
+                  }}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         {/* Message list */}
         <FlatList
           ref={listRef}
@@ -384,6 +397,7 @@ export default function Chat() {
               isSpeaking={speakingMessageId === item.id}
             />
           )}
+          style={{ flex: 1 }}
           contentContainerStyle={[styles.list, { padding: spacing.md, paddingBottom: spacing.sm }]}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
@@ -393,6 +407,8 @@ export default function Chat() {
               />
             </View>
           }
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
         />
 
         {/* Thinking indicator */}
@@ -523,6 +539,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  headerLeft: { flexDirection: 'row', alignItems: 'center' },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
   title: {},
   dot: { width: 10, height: 10, borderRadius: 5 },
