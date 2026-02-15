@@ -22,13 +22,24 @@ export function useClawHub(): UseClawHubResult {
   const search = useCallback(
     async (query?: string, category?: string) => {
       if (!state.client) {
-        setError('Not connected');
+        setError('Not connected to gateway');
         return;
       }
       setLoading(true);
       setError(null);
       try {
-        const result = await state.client.getClawHubSkills(query, category);
+        let result = await state.client.getClawHubSkills(query, category);
+        // Apply client-side filtering if query is provided
+        // (the ClawHub REST API may not support server-side search)
+        if (query && result.length > 0) {
+          const q = query.toLowerCase();
+          result = result.filter(
+            (s) =>
+              s.name.toLowerCase().includes(q) ||
+              s.description.toLowerCase().includes(q) ||
+              s.id.toLowerCase().includes(q)
+          );
+        }
         if (mountedRef.current) {
           setSkills(result);
         }

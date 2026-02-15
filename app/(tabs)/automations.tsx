@@ -66,8 +66,23 @@ export default function Automations() {
       try {
         await state.client.runCronJob(id);
         liveJobs.refresh();
-      } catch {
-        Alert.alert('Error', 'Failed to run automation.');
+        const jobName = jobs.find((j) => j.id === id)?.name ?? 'Automation';
+        Alert.alert('Run Completed', `"${jobName}" ran successfully.`);
+      } catch (e: unknown) {
+        const detail = e instanceof Error ? e.message : String(e);
+        const isTimeout = detail.toLowerCase().includes('timeout');
+
+        // Always refresh — the job may have succeeded even if the RPC timed out
+        liveJobs.refresh();
+
+        if (isTimeout) {
+          Alert.alert(
+            'Run May Still Be In Progress',
+            'The automation was triggered but took longer than expected to respond. Pull down to refresh and check the latest status.',
+          );
+        } else {
+          Alert.alert('Run Failed', detail);
+        }
       } finally {
         setRunningId(null);
       }
@@ -137,12 +152,17 @@ export default function Automations() {
                     >
                       {job.name}
                     </Text>
-                    <Switch
-                      value={enabled}
-                      onValueChange={() => toggle(job.id, job.enabled)}
-                      trackColor={{ true: colors.accent + '44', false: '#333' }}
-                      thumbColor={enabled ? colors.accent : '#666'}
-                    />
+                    <View
+                      onStartShouldSetResponder={() => true}
+                      onTouchEnd={(e) => e.stopPropagation()}
+                    >
+                      <Switch
+                        value={enabled}
+                        onValueChange={() => toggle(job.id, enabled)}
+                        trackColor={{ true: colors.accent + '44', false: '#333' }}
+                        thumbColor={enabled ? colors.accent : '#666'}
+                      />
+                    </View>
                   </View>
                   <Text
                     style={[

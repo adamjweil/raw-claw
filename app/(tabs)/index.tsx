@@ -1,34 +1,21 @@
-import { useState, useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, RefreshControl, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useStore } from '../../src/services/store';
 import { useTheme } from '../../src/theme';
-import { AnimatedCard, ScreenHeader, StatusPill, Row, SkeletonCard, EmptyState } from '../../src/components';
-import { useGatewayStatus, useActivityFeed, useCronJobs, useTokenUsage, useNotifications } from '../../src/hooks';
-import { ActivityEvent, CronJob } from '../../src/types';
+import { AnimatedCard, ScreenHeader, StatusPill, Row, EmptyState, ModelPicker, SkeletonCard } from '../../src/components';
+import { ActivityItem } from '../../src/components/ActivityItem';
+import { OfflineBanner } from '../../src/components/OfflineBanner';
+import { NotificationSummary } from '../../src/components/NotificationSummary';
+import { UsageChart } from '../../src/components/UsageChart';
+import { useGatewayStatus, useActivityFeed, useCronJobs, useTokenUsage, usePairedNodes } from '../../src/hooks';
+import { GatewayClient } from '../../src/services/gateway';
+import { CronJob, ActivityEvent } from '../../src/types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
-
-const CATEGORY_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
-  chat: 'chatbubble',
-  cron: 'timer',
-  channel: 'radio',
-  system: 'settings',
-};
-
-function relativeTime(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function formatNextRun(jobs: CronJob[]): string {
   const enabled = jobs.filter((j) => j.enabled && j.nextRun);
@@ -40,9 +27,9 @@ function formatNextRun(jobs: CronJob[]): string {
   const diff = next - Date.now();
   if (diff <= 0) return 'Running now';
   const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `in ${mins} min`;
+  if (mins < 60) return `${mins} min`;
   const hours = Math.floor(mins / 60);
-  return `in ${hours}h ${mins % 60}m`;
+  return `${hours}h ${mins % 60}m`;
 }
 
 function formatTokenCount(n: number): string {
@@ -51,174 +38,47 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
-// ─── Activity Item ───────────────────────────────────────────────────
-
-interface ActivityItemProps {
-  event: ActivityEvent;
+function getLatencyColor(ms: number, colors: { success: string; warning: string; error: string }): string {
+  if (ms < 100) return colors.success;
+  if (ms <= 500) return colors.warning;
+  return colors.error;
 }
 
-function ActivityItem({ event }: ActivityItemProps) {
-  const { colors, spacing } = useTheme();
-  const iconName = (event.icon as keyof typeof Ionicons.glyphMap) || CATEGORY_ICONS[event.category] || 'ellipse';
-
-  return (
-    <View
-      style={[
-        styles.activityRow,
-        { paddingVertical: spacing.sm, borderBottomColor: colors.border },
-      ]}
-    >
-      <Ionicons name={iconName} size={14} color={colors.textMuted} style={{ marginRight: spacing.sm }} />
-      <Text style={[styles.activityText, { color: colors.textSecondary }]} numberOfLines={1}>
-        {event.text}
-      </Text>
-      <Text style={[styles.activityTime, { color: colors.textMuted, marginLeft: spacing.sm }]}>
-        {relativeTime(event.timestamp)}
-      </Text>
-    </View>
-  );
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
-// ─── Token Usage Bar ─────────────────────────────────────────────────
+const DEVICE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  mac: 'desktop-outline',
+  'mac mini': 'desktop-outline',
+  macbook: 'laptop-outline',
+  iphone: 'phone-portrait-outline',
+  ipad: 'tablet-portrait-outline',
+  'raspberry pi': 'hardware-chip-outline',
+  linux: 'terminal-outline',
+  windows: 'desktop-outline',
+  server: 'server-outline',
+};
 
-function TokenBar({ current, limit }: { current: number; limit?: number }) {
-  const { colors, radius } = useTheme();
-  const percentage = limit ? Math.min((current / limit) * 100, 100) : 0;
-
-  if (!limit) return null;
-
-  return (
-    <View style={[styles.barBg, { backgroundColor: colors.surface, borderRadius: radius.sm }]}>
-      <View
-        style={[
-          styles.barFill,
-          {
-            backgroundColor: percentage > 80 ? colors.warning : colors.accent,
-            borderRadius: radius.sm,
-            width: `${percentage}%` as unknown as number,
-          },
-        ]}
-      />
-    </View>
-  );
-}
-
-// ─── Quick Action Button ─────────────────────────────────────────────
-
-interface QuickActionProps {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  loading?: boolean;
-}
-
-function QuickAction({ icon, label, onPress, loading }: QuickActionProps) {
-  const { colors, spacing, radius, typography } = useTheme();
-
-  return (
-    <Pressable
-      style={[
-        styles.actionBtn,
-        {
-          backgroundColor: colors.surface,
-          borderRadius: radius.md,
-          padding: spacing.md - 2,
-        },
-      ]}
-      onPress={onPress}
-      disabled={loading}
-    >
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.accent} />
-      ) : (
-        <Ionicons name={icon} size={20} color="#fff" />
-      )}
-      <Text
-        style={[styles.actionLabel, { color: colors.textSecondary, fontSize: typography.caption.fontSize }]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-// ─── Notification Summary Card (Real) ─────────────────────────────────
-
-function NotificationSummary() {
-  const { colors, spacing } = useTheme();
-  const { unreadByCategory } = useNotifications();
-
-  const categories = [
-    { name: 'Arb Alerts', key: 'arb_alert', icon: 'trending-up' as const },
-    { name: 'Cron Results', key: 'cron_result', icon: 'timer' as const },
-    { name: 'Reminders', key: 'reminder', icon: 'notifications' as const },
-  ];
-
-  const totalUnread = categories.reduce((sum, cat) => sum + (unreadByCategory[cat.key] || 0), 0);
-
-  return (
-    <>
-      {categories.map((cat) => {
-        const count = unreadByCategory[cat.key] || 0;
-        return (
-          <View
-            key={cat.name}
-            style={[styles.notifRow, { paddingVertical: spacing.sm, borderBottomColor: colors.border }]}
-            accessibilityLabel={`${cat.name}: ${count} unread`}
-          >
-            <Ionicons name={cat.icon} size={16} color={colors.textMuted} style={{ marginRight: spacing.sm }} />
-            <Text style={[styles.notifName, { color: colors.textSecondary }]}>{cat.name}</Text>
-            <Text style={[styles.notifCount, { color: count > 0 ? colors.accent : colors.textMuted }]}>
-              {count}
-            </Text>
-          </View>
-        );
-      })}
-      {totalUnread === 0 && (
-        <Text style={[styles.noNotifs, { color: colors.textMuted, marginTop: spacing.sm }]}>
-          No new notifications
-        </Text>
-      )}
-    </>
-  );
-}
-
-// ─── Offline Banner ──────────────────────────────────────────────────
-
-function OfflineBanner() {
-  const { colors, spacing } = useTheme();
-  const { state } = useStore();
-
-  if (state.connected) return null;
-
-  return (
-    <View
-      style={[
-        styles.offlineBanner,
-        {
-          backgroundColor: colors.error + '22',
-          borderColor: colors.error + '44',
-          padding: spacing.sm,
-          marginBottom: spacing.md,
-          borderRadius: 8,
-        },
-      ]}
-      accessibilityRole="alert"
-      accessibilityLabel="You are offline"
-    >
-      <Ionicons name="cloud-offline" size={16} color={colors.error} />
-      <Text style={[styles.offlineText, { color: colors.error, marginLeft: spacing.sm }]}>
-        Offline — showing cached data
-      </Text>
-    </View>
-  );
+function getDeviceIcon(type: string): keyof typeof Ionicons.glyphMap {
+  const lower = type.toLowerCase();
+  for (const [key, icon] of Object.entries(DEVICE_ICONS)) {
+    if (lower.includes(key)) return icon;
+  }
+  return 'hardware-chip-outline';
 }
 
 // ─── Home Screen ─────────────────────────────────────────────────────
 
 export default function Home() {
-  const { state, dispatch } = useStore();
-  const { colors, spacing, typography } = useTheme();
+  const { state, saveConfig } = useStore();
+  const { colors, spacing, typography, radius } = useTheme();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -227,6 +87,106 @@ export default function Home() {
   const activityFeed = useActivityFeed();
   const cronJobs = useCronJobs();
   const tokenUsage = useTokenUsage();
+  const pairedNodesHook = usePairedNodes();
+
+  const connected = state.connected;
+
+  // Model picker state
+  const [showModelPicker, setShowModelPicker] = useState(false);
+
+  // Inline edit state for gateway connection
+  const [editing, setEditing] = useState(false);
+  const [editUrl, setEditUrl] = useState(state.config.url);
+  const [editToken, setEditToken] = useState(state.config.token);
+  const [testing, setTesting] = useState(false);
+
+  // Sync edit fields when config changes externally
+  useEffect(() => {
+    if (!editing) {
+      setEditUrl(state.config.url);
+      setEditToken(state.config.token);
+    }
+  }, [state.config, editing]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditUrl(state.config.url);
+    setEditToken(state.config.token);
+    setEditing(false);
+  }, [state.config]);
+
+  const handleTestConnection = useCallback(async () => {
+    setTesting(true);
+    try {
+      const client = new GatewayClient(editUrl, editToken);
+      const ok = await client.testConnection();
+      Alert.alert(
+        ok ? 'Connected' : 'Failed',
+        ok ? 'Gateway is reachable.' : 'Could not reach gateway.'
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      Alert.alert('Error', msg);
+    } finally {
+      setTesting(false);
+    }
+  }, [editUrl, editToken]);
+
+  const handleSaveConfig = useCallback(async () => {
+    await saveConfig({ url: editUrl, token: editToken });
+    Alert.alert('Saved', 'Gateway configuration updated.');
+    setEditing(false);
+  }, [editUrl, editToken, saveConfig]);
+
+  // Latency measurement
+  const [latency, setLatency] = useState<number | null>(null);
+  const [connUptime, setConnUptime] = useState<string>('—');
+  const connectedSinceRef = useRef<number | null>(null);
+
+  const measureLatency = useCallback(async () => {
+    if (!state.client) {
+      setLatency(null);
+      return;
+    }
+    const start = performance.now();
+    try {
+      await state.client.getStatus();
+      const ms = Math.round(performance.now() - start);
+      setLatency(ms);
+    } catch {
+      setLatency(null);
+    }
+  }, [state.client]);
+
+  // Track connection start time for uptime
+  useEffect(() => {
+    if (connected && !connectedSinceRef.current) {
+      connectedSinceRef.current = Date.now();
+    } else if (!connected) {
+      connectedSinceRef.current = null;
+      setConnUptime('—');
+    }
+  }, [connected]);
+
+  // Auto-refresh latency and uptime every 10s
+  useEffect(() => {
+    measureLatency();
+    const interval = setInterval(() => {
+      measureLatency();
+      if (connectedSinceRef.current) {
+        const diff = Date.now() - connectedSinceRef.current;
+        const mins = Math.floor(diff / 60_000);
+        const hours = Math.floor(mins / 60);
+        if (hours > 0) {
+          setConnUptime(`${hours}h ${mins % 60}m`);
+        } else if (mins > 0) {
+          setConnUptime(`${mins}m`);
+        } else {
+          setConnUptime('< 1m');
+        }
+      }
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [measureLatency]);
 
   // Pull-to-refresh
   const onRefresh = useCallback(async () => {
@@ -237,9 +197,46 @@ export default function Home() {
       activityFeed.refresh(),
       cronJobs.refresh(),
       tokenUsage.refresh(),
+      pairedNodesHook.refresh(),
+      measureLatency(),
     ]);
     setRefreshing(false);
-  }, [gatewayStatus, activityFeed, cronJobs, tokenUsage]);
+  }, [gatewayStatus, activityFeed, cronJobs, tokenUsage, pairedNodesHook, measureLatency]);
+
+  // Handle activity item press — navigate to the relevant detail screen
+  const handleActivityPress = useCallback(
+    (event: ActivityEvent) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
+      switch (event.category) {
+        case 'chat':
+          if (event.entityId) {
+            router.push({
+              pathname: '/(tabs)/chat',
+              params: { sessionId: event.entityId },
+            });
+          }
+          break;
+
+        case 'cron':
+          if (event.entityId) {
+            router.push(`/automations/${event.entityId}`);
+          }
+          break;
+
+        case 'channel':
+          Alert.alert(
+            `Channel "${event.entityId ?? '—'}"`,
+            `Status: ${event.text}\nLast update: ${event.timestamp ? new Date(event.timestamp).toLocaleString() : '—'}`,
+          );
+          break;
+
+        default:
+          break;
+      }
+    },
+    [router],
+  );
 
   // Derive status pill state
   const pillState = useMemo(() => {
@@ -253,54 +250,32 @@ export default function Home() {
 
   // Status pill label
   const pillLabel = useMemo(() => {
-    if (pillState === 'online' && modelName) return `${modelName} · Online`;
+    if (pillState === 'online') return 'Online';
     return undefined; // use default from StatusPill
   }, [pillState, modelName]);
-
-  // Quick action handlers
-  const [actionLoading, setActionLoading] = useQuickActionState();
-
-  const handleQuickAction = useCallback(
-    async (action: string) => {
-      if (!state.client) {
-        router.push('/settings');
-        return;
-      }
-
-      setActionLoading(action, true);
-      try {
-        switch (action) {
-          case 'email':
-            dispatch({ type: 'SET_THINKING', thinking: true });
-            await state.client.sendMessage('Check my email');
-            dispatch({ type: 'SET_THINKING', thinking: false });
-            router.push('/(tabs)/chat');
-            break;
-          case 'weather':
-            dispatch({ type: 'SET_THINKING', thinking: true });
-            await state.client.sendMessage("What's the weather?");
-            dispatch({ type: 'SET_THINKING', thinking: false });
-            router.push('/(tabs)/chat');
-            break;
-          case 'crons':
-            router.push('/(tabs)/automations');
-            break;
-          case 'status':
-            router.push('/(tabs)/status');
-            break;
-        }
-      } catch {
-        dispatch({ type: 'SET_THINKING', thinking: false });
-      } finally {
-        setActionLoading(action, false);
-      }
-    },
-    [state.client, dispatch, router, setActionLoading]
-  );
 
   // Active automation count
   const enabledJobs = cronJobs.data?.filter((j) => j.enabled).length ?? 0;
   const nextRunText = cronJobs.data ? formatNextRun(cronJobs.data) : '—';
+
+  // Token usage data — use dedicated hook only (gateway status fallback
+  // can return stale zero values before the real data arrives)
+  const usage = tokenUsage.data ?? null;
+  const trend = usage?.trend || [];
+
+  // Compute yesterday comparison
+  let todayVsYesterday = '';
+  if (trend.length >= 2) {
+    const todayTokens = trend[trend.length - 1]?.tokens || 0;
+    const yesterdayTokens = trend[trend.length - 2]?.tokens || 0;
+    if (yesterdayTokens > 0) {
+      const pct = Math.round(((todayTokens - yesterdayTokens) / yesterdayTokens) * 100);
+      todayVsYesterday = pct >= 0 ? `+${pct}% vs yesterday` : `${pct}% vs yesterday`;
+    }
+  }
+
+  // Paired nodes from hook
+  const pairedNodes = pairedNodesHook.nodes;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
@@ -315,7 +290,7 @@ export default function Home() {
 
         {/* Header */}
         <ScreenHeader
-          title="Paw 🐾"
+          title="RawClaw"
           rightElement={
             <StatusPill
               state={pillState}
@@ -325,64 +300,228 @@ export default function Home() {
           }
         />
 
-        {/* Gateway Status Card */}
-        {gatewayStatus.loading && !gatewayStatus.data ? (
-          <SkeletonCard lines={3} />
-        ) : (
-          <AnimatedCard title="Gateway Status" icon="server" delay={0}>
-            <Row
-              label="Model"
-              value={gatewayStatus.data?.model || state.status?.model || '—'}
-            />
-            <Row label="Uptime" value={gatewayStatus.data?.uptime || state.status?.uptime || '—'} />
-            <Row
-              label="Session"
-              value={
-                (gatewayStatus.data?.sessionId || state.status?.sessionId || '').slice(0, 12) +
-                (gatewayStatus.data?.sessionId || state.status?.sessionId ? '…' : '—')
-              }
-            />
+        {/* ─── Gateway Status Card ──────────────────────────────── */}
+        {gatewayStatus.loading && !gatewayStatus.data && !state.status ? (
+          <SkeletonCard lines={5} />
+        ) : !gatewayStatus.data && !state.status ? null : (
+          <AnimatedCard
+            title="Gateway"
+            icon="wifi"
+            delay={0}
+            headerRight={
+              <Pressable
+                onPress={editing ? handleCancelEdit : () => setEditing(true)}
+                accessibilityRole="button"
+                accessibilityLabel={editing ? 'Cancel editing' : 'Edit connection'}
+              >
+                <Text style={{ color: colors.accent, fontSize: typography.small.fontSize, fontWeight: '600' }}>
+                  {editing ? 'Cancel' : 'Edit'}
+                </Text>
+              </Pressable>
+            }
+          >
+            {editing ? (
+              <View>
+                <Text
+                  style={[
+                    styles.editLabel,
+                    {
+                      color: colors.textMuted,
+                      fontSize: typography.small.fontSize,
+                      marginBottom: spacing.xs,
+                    },
+                  ]}
+                >
+                  GATEWAY URL
+                </Text>
+                <TextInput
+                  style={[
+                    styles.editInput,
+                    {
+                      backgroundColor: colors.surface,
+                      color: colors.text,
+                      borderRadius: radius.md,
+                      padding: spacing.sm + 2,
+                      fontSize: typography.body.fontSize,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  value={editUrl}
+                  onChangeText={setEditUrl}
+                  placeholder="http://localhost:3000"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  accessibilityLabel="Gateway URL"
+                />
+
+                <Text
+                  style={[
+                    styles.editLabel,
+                    {
+                      color: colors.textMuted,
+                      fontSize: typography.small.fontSize,
+                      marginTop: spacing.md,
+                      marginBottom: spacing.xs,
+                    },
+                  ]}
+                >
+                  TOKEN
+                </Text>
+                <TextInput
+                  style={[
+                    styles.editInput,
+                    {
+                      backgroundColor: colors.surface,
+                      color: colors.text,
+                      borderRadius: radius.md,
+                      padding: spacing.sm + 2,
+                      fontSize: typography.body.fontSize,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  value={editToken}
+                  onChangeText={setEditToken}
+                  placeholder="Enter token"
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  accessibilityLabel="Gateway Token"
+                />
+
+                <View style={[styles.editButtonRow, { marginTop: spacing.md, gap: spacing.sm }]}>
+                  <Pressable
+                    style={[
+                      styles.editTestBtn,
+                      {
+                        padding: spacing.sm + 2,
+                        borderRadius: radius.md,
+                        borderColor: colors.accent + '44',
+                        flex: 1,
+                      },
+                    ]}
+                    onPress={handleTestConnection}
+                    disabled={testing}
+                    accessibilityRole="button"
+                    accessibilityLabel="Test connection"
+                  >
+                    {testing ? (
+                      <ActivityIndicator color={colors.accent} size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="wifi" size={16} color={colors.accent} />
+                        <Text style={{ color: colors.accent, fontSize: 14, fontWeight: '600' }}>
+                          Test
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+
+                  <Pressable
+                    style={[
+                      styles.editSaveBtn,
+                      {
+                        backgroundColor: colors.accent,
+                        borderRadius: radius.md,
+                        padding: spacing.sm + 2,
+                        flex: 1,
+                      },
+                    ]}
+                    onPress={handleSaveConfig}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save configuration"
+                  >
+                    <Ionicons name="save" size={16} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Save</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <>
+                <Row label="Gateway URL" value={state.config.url || '—'} copyable />
+                <Row
+                  label="Status"
+                  value={connected ? 'Connected' : 'Disconnected'}
+                  valueColor={connected ? colors.success : colors.error}
+                />
+                <Row label="WebSocket" value={state.wsState} />
+                <Row
+                  label="Latency"
+                  value={latency != null ? `${latency}ms` : '—'}
+                  valueColor={
+                    latency != null
+                      ? getLatencyColor(latency, colors)
+                      : colors.textMuted
+                  }
+                />
+                <Row label="Uptime" value={connUptime} />
+                <Row
+                  label="Session"
+                  value={
+                    (gatewayStatus.data?.sessionId || state.status?.sessionId || '').slice(0, 12) +
+                    (gatewayStatus.data?.sessionId || state.status?.sessionId ? '…' : '—')
+                  }
+                  copyable
+                  copyValue={gatewayStatus.data?.sessionId || state.status?.sessionId || ''}
+                />
+              </>
+            )}
           </AnimatedCard>
         )}
 
-        {/* Quick Actions */}
-        <AnimatedCard title="Quick Actions" icon="flash" delay={80}>
-          <View style={styles.actions}>
-            <QuickAction
-              icon="mail"
-              label="Check Email"
-              onPress={() => handleQuickAction('email')}
-              loading={actionLoading.email}
+        {/* ─── Model ────────────────────────────────────────────── */}
+        {gatewayStatus.loading && !gatewayStatus.data && !state.status ? (
+          <SkeletonCard lines={3} />
+        ) : !gatewayStatus.data && !state.status ? null : (
+          <AnimatedCard
+            title="Model"
+            icon="hardware-chip"
+            delay={80}
+            headerRight={
+              <Pressable
+                onPress={() => setShowModelPicker(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Edit model"
+              >
+                <Text style={{ color: colors.accent, fontSize: typography.small.fontSize, fontWeight: '600' }}>
+                  Edit
+                </Text>
+              </Pressable>
+            }
+          >
+            <Row label="Name" value={gatewayStatus.data?.model || state.status?.model || '—'} />
+            <Row
+              label="Provider"
+              value={
+                modelName
+                  ? modelName.toLowerCase().includes('claude')
+                    ? 'Anthropic'
+                    : modelName.toLowerCase().includes('gpt')
+                    ? 'OpenAI'
+                    : '—'
+                  : '—'
+              }
             />
-            <QuickAction
-              icon="cloud"
-              label="Weather"
-              onPress={() => handleQuickAction('weather')}
-              loading={actionLoading.weather}
-            />
-            <QuickAction
-              icon="timer"
-              label="Run Crons"
-              onPress={() => handleQuickAction('crons')}
-              loading={actionLoading.crons}
-            />
-            <QuickAction
-              icon="pulse"
-              label="Status"
-              onPress={() => handleQuickAction('status')}
-              loading={actionLoading.status}
-            />
-          </View>
-        </AnimatedCard>
+            <Row label="Context" value="—" />
+          </AnimatedCard>
+        )}
+        <ModelPicker
+          visible={showModelPicker}
+          onClose={() => {
+            setShowModelPicker(false);
+            gatewayStatus.refresh();
+          }}
+        />
 
-        {/* Recent Activity */}
-        {activityFeed.loading && !activityFeed.data ? (
-          <SkeletonCard lines={5} />
-        ) : (
+        {/* ─── Recent Activity ──────────────────────────────────── */}
+        {activityFeed.loading && activityFeed.data === null ? (
+          <SkeletonCard lines={4} />
+        ) : activityFeed.data === null ? null : (
           <AnimatedCard title="Recent Activity" icon="time" delay={160}>
             {activityFeed.data && activityFeed.data.length > 0 ? (
               activityFeed.data.slice(0, 8).map((event) => (
-                <ActivityItem key={event.id} event={event} />
+                <ActivityItem key={event.id} event={event} onPress={handleActivityPress} />
               ))
             ) : (
               <EmptyState icon="time-outline" message="No recent activity" />
@@ -390,69 +529,203 @@ export default function Home() {
           </AnimatedCard>
         )}
 
-        {/* Active Automations */}
-        {cronJobs.loading && !cronJobs.data ? (
+        {/* ─── Active Automations ───────────────────────────────── */}
+        {cronJobs.loading && cronJobs.data === null ? (
           <SkeletonCard lines={2} />
-        ) : (
-          <AnimatedCard title="Active Automations" icon="repeat" delay={240}>
-            <Row
-              label="Running"
-              value={String(enabledJobs)}
-              valueColor={colors.accent}
-            />
-            <Row label="Next run" value={nextRunText} />
+        ) : cronJobs.data === null ? null : (
+          <AnimatedCard title="Automations" icon="repeat" delay={240}>
+            <View style={styles.usageBigNumbers}>
+              <View style={styles.usageStat}>
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontSize: 28,
+                    fontWeight: '700',
+                  }}
+                >
+                  {String(enabledJobs)}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                  Active
+                </Text>
+              </View>
+              <View style={styles.usageStat}>
+                <Text
+                  style={{
+                    color: colors.text,
+                    fontSize: 28,
+                    fontWeight: '700',
+                  }}
+                >
+                  {nextRunText}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                  Next run
+                </Text>
+              </View>
+            </View>
           </AnimatedCard>
         )}
 
-        {/* Token Usage */}
-        {tokenUsage.loading && !tokenUsage.data ? (
-          <SkeletonCard lines={3} />
-        ) : tokenUsage.data ? (
-          <AnimatedCard title="Token Usage" icon="analytics" delay={320}>
-            <Row label="Today" value={formatTokenCount(tokenUsage.data.today)} />
-            <Row label="Total" value={formatTokenCount(tokenUsage.data.total)} />
-            {tokenUsage.data.limit && (
-              <>
-                <Row
-                  label="Limit"
-                  value={formatTokenCount(tokenUsage.data.limit)}
-                />
-                <TokenBar current={tokenUsage.data.today} limit={tokenUsage.data.limit} />
-              </>
-            )}
-            {tokenUsage.data.estimatedCost !== undefined && (
+        {/* ─── Usage ────────────────────────────────────────────── */}
+        {tokenUsage.loading && !usage ? (
+          <SkeletonCard lines={4} />
+        ) : !usage ? null : usage.today > 0 || usage.total > 0 ? (
+          <AnimatedCard title="Usage" icon="analytics" delay={320}>
+            <View style={[styles.usageBigNumbers, { marginBottom: spacing.md }]}>
+              <View style={styles.usageStat}>
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontSize: 28,
+                    fontWeight: '700',
+                  }}
+                >
+                  {formatTokenCount(usage.today)}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                  Tokens today
+                </Text>
+                {todayVsYesterday ? (
+                  <Text
+                    style={{
+                      color: todayVsYesterday.startsWith('+') ? colors.warning : colors.success,
+                      fontSize: 11,
+                      marginTop: 2,
+                    }}
+                  >
+                    {todayVsYesterday}
+                  </Text>
+                ) : null}
+              </View>
+              <View style={styles.usageStat}>
+                <Text
+                  style={{
+                    color: colors.text,
+                    fontSize: 28,
+                    fontWeight: '700',
+                  }}
+                >
+                  {formatTokenCount(usage.total)}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                  Total tokens
+                </Text>
+              </View>
+            </View>
+
+            {usage.estimatedCost != null && (
               <Row
-                label="Est. Cost"
-                value={`$${tokenUsage.data.estimatedCost.toFixed(2)}`}
+                label="Estimated Cost Today"
+                value={`$${usage.estimatedCost.toFixed(2)}`}
                 valueColor={colors.warning}
               />
             )}
+
+            {trend.length > 0 && (
+              <View style={{ marginTop: spacing.md }}>
+                <Text
+                  style={{
+                    color: colors.textSecondary,
+                    fontSize: typography.label.fontSize,
+                    fontWeight: '600',
+                    marginBottom: spacing.sm,
+                  }}
+                >
+                  7-Day Trend
+                </Text>
+                <UsageChart data={trend.slice(-7)} />
+              </View>
+            )}
           </AnimatedCard>
         ) : (
-          <AnimatedCard title="Token Usage" icon="analytics" delay={320}>
+          <AnimatedCard title="Usage" icon="analytics" delay={320}>
             <EmptyState icon="analytics-outline" message="Usage data unavailable" />
           </AnimatedCard>
         )}
 
-        {/* Notification Summary */}
-        <AnimatedCard title="Notifications" icon="notifications" delay={400}>
+        {/* ─── Paired Nodes ─────────────────────────────────────── */}
+        {gatewayStatus.loading && !gatewayStatus.data && !state.status ? (
+          <SkeletonCard lines={3} />
+        ) : !gatewayStatus.data && !state.status ? null : (
+          <AnimatedCard title="Paired Nodes" icon="git-network" delay={400}>
+            {pairedNodes.length === 0 ? (
+              <EmptyState icon="hardware-chip-outline" message="No paired nodes" />
+            ) : (
+              pairedNodes.map((node) => (
+                <View
+                  key={node.id}
+                  style={[
+                    styles.nodeRow,
+                    {
+                      paddingVertical: spacing.sm + 2,
+                      borderBottomColor: colors.border,
+                      gap: spacing.sm,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={getDeviceIcon(node.type)}
+                    size={20}
+                    color={node.status === 'online' ? colors.success : colors.textMuted}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        color: colors.textSecondary,
+                        fontSize: typography.body.fontSize,
+                        fontWeight: '500',
+                      }}
+                    >
+                      {node.name}
+                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 1 }}>
+                      {node.type}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <View
+                        style={[
+                          styles.statusDot,
+                          {
+                            backgroundColor:
+                              node.status === 'online' ? colors.success : colors.textMuted,
+                          },
+                        ]}
+                      />
+                      <Text
+                        style={{
+                          color:
+                            node.status === 'online' ? colors.success : colors.textMuted,
+                          fontSize: 13,
+                          fontWeight: '500',
+                        }}
+                      >
+                        {node.status}
+                      </Text>
+                    </View>
+                    <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                      {timeAgo(node.lastSeen)}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </AnimatedCard>
+        )}
+
+        {/* ─── Notification Summary ─────────────────────────────── */}
+        {gatewayStatus.loading && !gatewayStatus.data && !state.status ? (
+          <SkeletonCard lines={2} />
+        ) : !gatewayStatus.data && !state.status ? null : (
+        <AnimatedCard title="Notifications" icon="notifications" delay={480}>
           <NotificationSummary />
         </AnimatedCard>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
-}
-
-// ─── Quick Action Loading State Hook ─────────────────────────────────
-
-function useQuickActionState() {
-  const [loading, setLoadingState] = useState<Record<string, boolean>>({});
-
-  const setLoading = useCallback((action: string, isLoading: boolean) => {
-    setLoadingState((prev) => ({ ...prev, [action]: isLoading }));
-  }, []);
-
-  return [loading, setLoading] as const;
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────
@@ -460,37 +733,37 @@ function useQuickActionState() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: {},
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  actionBtn: {
-    alignItems: 'center',
-    width: '47%' as unknown as number,
-    gap: 6,
+  editLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
-  actionLabel: { fontWeight: '600' },
-  activityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-  },
-  activityText: { fontSize: 13, flex: 1 },
-  activityTime: { fontSize: 12 },
-  barBg: { height: 6, width: '100%', marginTop: 8 },
-  barFill: { height: 6 },
-  notifRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-  },
-  notifName: { flex: 1, fontSize: 14 },
-  notifCount: { fontSize: 14, fontWeight: '700' },
-  noNotifs: { fontSize: 13, textAlign: 'center' },
-  offlineBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  editInput: {
     borderWidth: 1,
   },
-  offlineText: {
-    fontSize: 13,
-    fontWeight: '600',
+  editButtonRow: {
+    flexDirection: 'row',
   },
+  editTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+  },
+  editSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  usageBigNumbers: {
+    flexDirection: 'row',
+  },
+  usageStat: { flex: 1, alignItems: 'center' },
+  nodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
 });

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -32,8 +32,36 @@ export default function SkillDetail() {
   const [toggling, setToggling] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
+  const [fetchedDocs, setFetchedDocs] = useState<string | null>(null);
+  const [docsLoading, setDocsLoading] = useState(false);
 
   const skill = liveSkills.data?.find((s) => s.id === id) || null;
+
+  // Lazy-fetch docs when the Documentation tab is selected
+  useEffect(() => {
+    if (detailTab !== 'documentation') return;
+    // Already have docs from the skills list or a previous fetch
+    if (skill?.docs || fetchedDocs) return;
+    if (!state.client || !skill) return;
+
+    let cancelled = false;
+    setDocsLoading(true);
+    state.client
+      .getSkillDocs(skill.id, skill.filePath)
+      .then((docs) => {
+        if (!cancelled) setFetchedDocs(docs);
+      })
+      .catch(() => {
+        // Silently fail — will show fallback message
+      })
+      .finally(() => {
+        if (!cancelled) setDocsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailTab, skill?.id, skill?.docs, fetchedDocs, state.client]);
   const isClawHub = skill?.source === 'clawhub';
   const isEnabled =
     optimisticEnabled !== null ? optimisticEnabled : skill?.enabled ?? true;
@@ -325,10 +353,19 @@ export default function SkillDetail() {
               </AnimatedCard>
             )}
           </View>
+        ) : docsLoading ? (
+          <AnimatedCard delay={0}>
+            <View style={{ alignItems: 'center', paddingVertical: spacing.lg }}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={{ color: colors.textMuted, marginTop: spacing.sm, fontSize: 13 }}>
+                Loading documentation…
+              </Text>
+            </View>
+          </AnimatedCard>
         ) : (
           <AnimatedCard delay={0}>
             <Markdown style={markdownStyles}>
-              {skill.docs || 'No documentation available for this skill.'}
+              {skill.docs || fetchedDocs || 'No documentation available for this skill.'}
             </Markdown>
           </AnimatedCard>
         )}

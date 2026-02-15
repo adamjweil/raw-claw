@@ -7,6 +7,7 @@ interface AnimatedCardProps {
   children: React.ReactNode;
   title?: string;
   icon?: keyof typeof Ionicons.glyphMap;
+  headerRight?: React.ReactNode;
   delay?: number;
   style?: ViewStyle;
 }
@@ -15,6 +16,7 @@ export const AnimatedCard: React.FC<AnimatedCardProps> = ({
   children,
   title,
   icon,
+  headerRight,
   delay = 0,
   style,
 }) => {
@@ -43,7 +45,7 @@ export const AnimatedCard: React.FC<AnimatedCardProps> = ({
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <Card title={title} icon={icon} style={style}>
+      <Card title={title} icon={icon} headerRight={headerRight} style={style}>
         {children}
       </Card>
     </Animated.View>

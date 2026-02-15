@@ -49,10 +49,17 @@ export interface CronJob {
   enabled: boolean;
   lastRun: string | null;
   lastStatus: 'success' | 'error' | 'pending' | null;
+  lastError: string | null;
   nextRun: string | null;
   runHistory?: CronRunRecord[];
   createdAt?: string;
   updatedAt?: string;
+  /** The message/command the automation sends when triggered */
+  input?: string;
+  /** Human-readable description of what this automation does */
+  description?: string;
+  /** Any additional fields from the API not explicitly mapped */
+  rawExtras?: Record<string, unknown>;
 }
 
 export interface CronRunRecord {
@@ -61,6 +68,7 @@ export interface CronRunRecord {
   completedAt: string | null;
   status: 'success' | 'error' | 'running';
   output?: string;
+  error?: string;
   duration?: number;
 }
 
@@ -74,6 +82,10 @@ export interface Skill {
   enabled: boolean;
   version?: string;
   docs?: string;
+  filePath?: string;
+  baseDir?: string;
+  emoji?: string;
+  homepage?: string;
   usage?: { count: number; lastUsed: string | null };
   source?: 'installed' | 'clawhub';
 }
@@ -181,6 +193,8 @@ export interface ActivityEvent {
   category: 'chat' | 'cron' | 'channel' | 'system';
   timestamp: string;
   icon?: string;
+  /** The underlying entity ID (session key, job id, or channel name) for deep navigation. */
+  entityId?: string;
 }
 
 // ─── WebSocket Connection State ──────────────────────────────────────

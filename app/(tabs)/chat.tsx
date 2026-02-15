@@ -13,17 +13,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useStore } from '../../src/services/store';
 import { useTheme } from '../../src/theme';
 import { EmptyState } from '../../src/components';
 import { MessageBubble } from '../../src/components/MessageBubble';
-import { SessionTabs } from '../../src/components/SessionTabs';
+
 import { ChatSearch } from '../../src/components/ChatSearch';
 import { CommandPalette, SlashCommand } from '../../src/components/CommandPalette';
 import { AttachmentPicker, PickedFile } from '../../src/components/AttachmentPicker';
 import { AttachmentPreview } from '../../src/components/AttachmentPreview';
-import { useChatSessions } from '../../src/hooks/useChatSessions';
+
 import { useVoiceInput } from '../../src/hooks/useVoiceInput';
 import { useTextToSpeech } from '../../src/hooks/useTextToSpeech';
 import { Message } from '../../src/types';
@@ -41,6 +41,7 @@ export default function Chat() {
   const { state, dispatch } = useStore();
   const { colors, spacing, radius, typography } = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ sessionId?: string }>();
 
   // Chat input state
   const [input, setInput] = useState('');
@@ -57,19 +58,31 @@ export default function Chat() {
   const showCommandPalette = input.startsWith('/');
   const commandFilter = showCommandPalette ? input.slice(1) : '';
 
-  // Sessions hook
-  const {
-    sessions,
-    activeSessionId,
-    selectSession,
-    createSession,
-    renameSession,
-    deleteSession,
-  } = useChatSessions();
+  const activeSessionId = state.activeSessionId;
 
   // Voice hooks
   const { isRecording, startRecording, stopRecording } = useVoiceInput();
   const { speakingMessageId, speak, stop: stopSpeech } = useTextToSpeech();
+
+  // When a sessionId param is supplied (e.g. from the Home activity feed),
+  // set it as the active session and load its chat history.
+  useEffect(() => {
+    if (params.sessionId && params.sessionId !== state.activeSessionId) {
+      dispatch({ type: 'SET_ACTIVE_SESSION', sessionId: params.sessionId });
+
+      // Load session messages from gateway
+      if (state.client) {
+        state.client
+          .getChatHistory(params.sessionId)
+          .then((messages) => {
+            dispatch({ type: 'SET_MESSAGES', messages });
+          })
+          .catch(() => {
+            // Silently fail — user can still send new messages
+          });
+      }
+    }
+  }, [params.sessionId, state.client, state.activeSessionId, dispatch]);
 
   // Listen for incoming WebSocket messages
   useEffect(() => {
@@ -308,23 +321,22 @@ export default function Chat() {
                 router.push('/(tabs)');
               }}
               hitSlop={8}
-              style={{ marginRight: spacing.sm }}
             >
               <Ionicons name="home-outline" size={22} color={colors.textSecondary} />
             </Pressable>
-            <Text
-              style={[
-                styles.title,
-                {
-                  color: colors.text,
-                  fontSize: typography.title.fontSize,
-                  fontWeight: typography.title.fontWeight,
-                },
-              ]}
-            >
-              Chat
-            </Text>
           </View>
+          <Text
+            style={[
+              styles.title,
+              {
+                color: colors.text,
+                fontSize: typography.title.fontSize,
+                fontWeight: typography.title.fontWeight,
+              },
+            ]}
+          >
+            Chat
+          </Text>
           <View style={styles.headerRight}>
             <Pressable onPress={() => setShowSearch(true)} hitSlop={8} style={{ marginRight: spacing.md }}>
               <Ionicons name="search" size={22} color={colors.textSecondary} />
@@ -337,18 +349,6 @@ export default function Chat() {
             />
           </View>
         </View>
-
-        {/* Session tabs */}
-        {sessions.length > 0 && (
-          <SessionTabs
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            onSelectSession={selectSession}
-            onCreateSession={createSession}
-            onRenameSession={renameSession}
-            onDeleteSession={deleteSession}
-          />
-        )}
 
         {/* Filter pills */}
         <View style={[styles.filterRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}>
@@ -539,9 +539,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
-  headerRight: { flexDirection: 'row', alignItems: 'center' },
-  title: {},
+  headerLeft: { flexDirection: 'row', alignItems: 'center', minWidth: 60 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', minWidth: 60, justifyContent: 'flex-end' },
+  title: { textAlign: 'center', flex: 1 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   filterRow: { flexDirection: 'row', gap: 8 },
   filterPill: {},

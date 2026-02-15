@@ -25,6 +25,59 @@ function formatDuration(ms?: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 }
 
+function formatFullTimestamp(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+const DetailRow: React.FC<{
+  label: string;
+  value: string;
+  colors: ReturnType<typeof useTheme>['colors'];
+  spacing: ReturnType<typeof useTheme>['spacing'];
+  typography: ReturnType<typeof useTheme>['typography'];
+}> = ({ label, value, colors, spacing, typography }) => (
+  <View style={[styles.detailRow, { paddingVertical: spacing.xs + 2 }]}>
+    <Text style={{ color: colors.textMuted, fontSize: typography.small.fontSize }}>
+      {label}
+    </Text>
+    <Text
+      style={{
+        color: colors.textSecondary,
+        fontSize: typography.small.fontSize,
+        fontFamily: monoFont,
+        flexShrink: 1,
+        textAlign: 'right',
+      }}
+      selectable
+    >
+      {value}
+    </Text>
+  </View>
+);
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'Success';
+    case 'error':
+      return 'Error';
+    case 'running':
+      return 'Running';
+    default:
+      return status;
+  }
+}
+
 const RunEntry: React.FC<{ run: CronRunRecord }> = ({ run }) => {
   const { colors, spacing, radius, typography } = useTheme();
   const [expanded, setExpanded] = useState(false);
@@ -33,7 +86,13 @@ const RunEntry: React.FC<{ run: CronRunRecord }> = ({ run }) => {
     <View style={[styles.entry, { borderBottomColor: colors.border }]}>
       <Pressable
         onPress={() => setExpanded(!expanded)}
-        style={[styles.entryHeader, { paddingVertical: spacing.md }]}
+        style={({ pressed }) => [
+          styles.entryHeader,
+          {
+            paddingVertical: spacing.md,
+            backgroundColor: pressed ? colors.surface : 'transparent',
+          },
+        ]}
       >
         <View style={styles.entryLeft}>
           <Text
@@ -56,41 +115,147 @@ const RunEntry: React.FC<{ run: CronRunRecord }> = ({ run }) => {
         </View>
         <View style={styles.entryRight}>
           <Badge status={run.status} />
-          {run.output && (
-            <Ionicons
-              name={expanded ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={colors.textMuted}
-              style={{ marginLeft: spacing.sm }}
-            />
-          )}
+          <Ionicons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={colors.textMuted}
+            style={{ marginLeft: spacing.sm }}
+          />
         </View>
       </Pressable>
 
-      {expanded && run.output && (
-        <ScrollView
+      {expanded && (
+        <View
           style={[
-            styles.logBlock,
+            styles.detailsContainer,
             {
-              backgroundColor: 'rgba(0,0,0,0.3)',
+              backgroundColor: colors.surface,
               borderRadius: radius.sm,
-              maxHeight: 200,
               marginBottom: spacing.md,
+              padding: spacing.sm,
             },
           ]}
         >
-          <Text
-            style={{
-              fontFamily: monoFont,
-              fontSize: 12,
-              lineHeight: 18,
-              color: colors.textSecondary,
-              padding: spacing.sm,
-            }}
-          >
-            {run.output}
-          </Text>
-        </ScrollView>
+          <DetailRow
+            label="Status"
+            value={statusLabel(run.status)}
+            colors={colors}
+            spacing={spacing}
+            typography={typography}
+          />
+          <DetailRow
+            label="Started"
+            value={formatFullTimestamp(run.startedAt)}
+            colors={colors}
+            spacing={spacing}
+            typography={typography}
+          />
+          <DetailRow
+            label="Completed"
+            value={formatFullTimestamp(run.completedAt)}
+            colors={colors}
+            spacing={spacing}
+            typography={typography}
+          />
+          <DetailRow
+            label="Duration"
+            value={formatDuration(run.duration)}
+            colors={colors}
+            spacing={spacing}
+            typography={typography}
+          />
+
+          {run.error && (
+            <View
+              style={[
+                styles.errorBlock,
+                {
+                  backgroundColor: colors.error + '14',
+                  borderColor: colors.error + '33',
+                  borderRadius: radius.sm,
+                  marginTop: spacing.sm,
+                  padding: spacing.sm,
+                },
+              ]}
+            >
+              <View style={styles.errorRow}>
+                <Ionicons name="alert-circle" size={14} color={colors.error} />
+                <Text
+                  style={{
+                    fontFamily: monoFont,
+                    fontSize: 12,
+                    lineHeight: 18,
+                    color: colors.error,
+                    marginLeft: 6,
+                    flex: 1,
+                  }}
+                  selectable
+                >
+                  {run.error}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {run.output && (
+            <View style={{ marginTop: spacing.sm }}>
+              <Text
+                style={{
+                  color: colors.textMuted,
+                  fontSize: typography.small.fontSize,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                Output
+              </Text>
+              <ScrollView
+                style={[
+                  styles.logBlock,
+                  {
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    borderRadius: radius.sm,
+                    maxHeight: 200,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    fontFamily: monoFont,
+                    fontSize: 12,
+                    lineHeight: 18,
+                    color: colors.textSecondary,
+                    padding: spacing.sm,
+                  }}
+                  selectable
+                >
+                  {run.output}
+                </Text>
+              </ScrollView>
+            </View>
+          )}
+
+          {!run.output && !run.error && run.status === 'success' && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: spacing.sm,
+                paddingTop: spacing.xs,
+              }}
+            >
+              <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+              <Text
+                style={{
+                  color: colors.textMuted,
+                  fontSize: typography.small.fontSize,
+                  marginLeft: spacing.xs,
+                }}
+              >
+                Completed successfully — no output recorded
+              </Text>
+            </View>
+          )}
+        </View>
       )}
     </View>
   );
@@ -134,7 +299,15 @@ const styles = StyleSheet.create({
   },
   entryLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   entryRight: { flexDirection: 'row', alignItems: 'center' },
+  detailsContainer: {},
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   logBlock: {},
+  errorBlock: { borderWidth: 1 },
+  errorRow: { flexDirection: 'row', alignItems: 'flex-start' },
   emptyWrap: { alignItems: 'center', paddingVertical: 32 },
 });
 

@@ -1,5 +1,7 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+import { Pressable } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import { StoreProvider } from '../src/services/store';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
@@ -7,6 +9,7 @@ import { NotificationManager } from '../src/services/notifications';
 
 function InnerLayout() {
   const { colors, isDark } = useTheme();
+  const router = useRouter();
 
   return (
     <>
@@ -29,6 +32,28 @@ function InnerLayout() {
             headerTintColor: isDark ? '#fff' : colors.text,
             presentation: 'modal',
             animation: 'slide_from_bottom',
+            headerLeft: () => (
+              <Pressable
+                onPress={() => router.back()}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Close settings"
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons
+                  name="close"
+                  size={22}
+                  color={isDark ? '#fff' : colors.text}
+                />
+              </Pressable>
+            ),
           }}
         />
       </Stack>

@@ -7,10 +7,11 @@ interface CardProps {
   children: React.ReactNode;
   title?: string;
   icon?: keyof typeof Ionicons.glyphMap;
+  headerRight?: React.ReactNode;
   style?: ViewStyle;
 }
 
-export const Card: React.FC<CardProps> = React.memo(({ children, title, icon, style }) => {
+export const Card: React.FC<CardProps> = React.memo(({ children, title, icon, headerRight, style }) => {
   const { colors, spacing, radius, typography } = useTheme();
 
   return (
@@ -27,7 +28,7 @@ export const Card: React.FC<CardProps> = React.memo(({ children, title, icon, st
         style,
       ]}
     >
-      {(title || icon) && (
+      {(title || icon || headerRight) && (
         <View style={[styles.header, { marginBottom: spacing.md - 2, gap: spacing.sm }]}>
           {icon && <Ionicons name={icon} size={18} color={colors.accent} />}
           {title && (
@@ -40,6 +41,7 @@ export const Card: React.FC<CardProps> = React.memo(({ children, title, icon, st
               {title}
             </Text>
           )}
+          {headerRight && <View style={styles.headerRight}>{headerRight}</View>}
         </View>
       )}
       {children}
@@ -56,5 +58,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {},
+  headerRight: {
+    marginLeft: 'auto',
+  },
 });
 

@@ -29,3 +29,7 @@ export { ErrorBoundary } from './ErrorBoundary';
 export { ModelPicker } from './ModelPicker';
 export { NotificationSettingsCard } from './NotificationSettingsCard';
 export { QuietHoursPicker } from './QuietHoursPicker';
+export { ActivityItem } from './ActivityItem';
+export { TokenBar } from './TokenBar';
+export { NotificationSummary } from './NotificationSummary';
+export { OfflineBanner } from './OfflineBanner';

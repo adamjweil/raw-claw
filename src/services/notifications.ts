@@ -186,9 +186,9 @@ export function handleNotificationDeepLink(data: Record<string, unknown>): void 
   if (!deepLink) return;
 
   try {
-    // Parse paw:// URLs
-    if (deepLink.startsWith('paw://')) {
-      const path = deepLink.replace('paw://', '/');
+    // Parse rawclaw:// URLs
+    if (deepLink.startsWith('rawclaw://')) {
+      const path = deepLink.replace('rawclaw://', '/');
 
       if (path.startsWith('/chat/')) {
         const sessionId = path.replace('/chat/', '');

@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.adamweil.paw'
+    namespace 'com.adamweil.rawclaw'
     defaultConfig {
-        applicationId 'com.adamweil.paw'
+        applicationId 'com.adamweil.rawclaw'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

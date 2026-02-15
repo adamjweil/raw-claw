@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Paw",
-    "slug": "paw",
+    "name": "RawClaw",
+    "slug": "rawclaw",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "scheme": "paw",
+    "scheme": "rawclaw",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -15,14 +15,14 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.adamweil.paw"
+      "bundleIdentifier": "com.adamweil.rawclaw"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0f"
       },
-      "package": "com.adamweil.paw"
+      "package": "com.adamweil.rawclaw"
     },
     "web": {
       "favicon": "./assets/favicon.png",

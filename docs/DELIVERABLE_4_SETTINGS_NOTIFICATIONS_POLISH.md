@@ -188,10 +188,10 @@ Settings and notifications are system-level features that touch every other scre
 **File to edit**: `src/services/notifications.ts`, `app/_layout.tsx`
 
 - When a notification is tapped, read its `deepLink` field and navigate accordingly:
-  - `paw://chat/:sessionId` → Open Chat tab, switch to that session.
-  - `paw://automations/:id` → Open Automations tab, navigate to job detail.
-  - `paw://status` → Open Status tab.
-  - `paw://memory/:name` → Open Memory Browser, navigate to that file.
+  - `rawclaw://chat/:sessionId` → Open Chat tab, switch to that session.
+  - `rawclaw://automations/:id` → Open Automations tab, navigate to job detail.
+  - `rawclaw://status` → Open Status tab.
+  - `rawclaw://memory/:name` → Open Memory Browser, navigate to that file.
 - Configure Expo Router's linking config to handle these URL schemes.
 - Use `expo-linking` for URL parsing.
 - If the app is not running, the deep-link should work when the app cold-starts from the notification.

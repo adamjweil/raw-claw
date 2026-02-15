@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,13 @@ import {
   RefreshControl,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../../src/services/store';
 import { useTheme } from '../../src/theme';
-import { ScreenHeader, AnimatedCard, Row, SkeletonCard, EmptyState } from '../../src/components';
+import { ScreenHeader, AnimatedCard, Row, SkeletonCard, EmptyState, ModelPicker } from '../../src/components';
 import { UsageChart } from '../../src/components/UsageChart';
 import { useGatewayStatus, useChannels, useTokenUsage } from '../../src/hooks';
 import { GatewayClient } from '../../src/services/gateway';
@@ -99,6 +100,9 @@ export default function Status() {
   const connectedSinceRef = useRef<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Model picker state
+  const [showModelPicker, setShowModelPicker] = useState(false);
+
   // Inline edit state for gateway connection
   const [editing, setEditing] = useState(false);
   const [editUrl, setEditUrl] = useState(state.config.url);
@@ -142,8 +146,77 @@ export default function Status() {
     setEditing(false);
   }, [editUrl, editToken, saveConfig]);
 
-  // Paired nodes from gateway status
-  const pairedNodes: PairedNode[] = statusData?.pairedNodes || [];
+  // Paired nodes – synthesize from known info + merge any real gateway nodes
+  const [gatewayNodes, setGatewayNodes] = useState<PairedNode[]>([]);
+
+  const fetchGatewayNodes = useCallback(async () => {
+    if (!state.client) {
+      setGatewayNodes([]);
+      return;
+    }
+    try {
+      const nodes = await state.client.getPairedNodes();
+      setGatewayNodes(nodes);
+    } catch {
+      setGatewayNodes([]);
+    }
+  }, [state.client]);
+
+  useEffect(() => {
+    fetchGatewayNodes();
+  }, [fetchGatewayNodes]);
+
+  // Build synthetic nodes from what we already know
+  const pairedNodes = useMemo<PairedNode[]>(() => {
+    const nodes: PairedNode[] = [];
+
+    // 1. Gateway host (the computer running OpenClaw)
+    const gatewayHost = state.config.url;
+    let hostLabel = 'Gateway Host';
+    try {
+      const urlObj = new URL(gatewayHost);
+      const hostname = urlObj.hostname;
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        hostLabel = 'This Mac';
+      } else {
+        hostLabel = hostname;
+      }
+    } catch {
+      // keep default label
+    }
+    nodes.push({
+      id: '_gateway_host',
+      name: hostLabel,
+      type: 'Mac',
+      status: connected ? 'online' : 'offline',
+      lastSeen: new Date().toISOString(),
+    });
+
+    // 2. This device (the phone / tablet running PAW)
+    const platformName =
+      Platform.OS === 'ios'
+        ? 'iPhone'
+        : Platform.OS === 'android'
+        ? 'Android'
+        : Platform.OS;
+    nodes.push({
+      id: '_this_device',
+      name: 'PAW Mobile',
+      type: platformName,
+      status: 'online',
+      lastSeen: new Date().toISOString(),
+    });
+
+    // 3. Merge any real nodes from the gateway (deduplicate by id)
+    const syntheticIds = new Set(nodes.map((n) => n.id));
+    for (const gn of gatewayNodes) {
+      if (!syntheticIds.has(gn.id)) {
+        nodes.push(gn);
+      }
+    }
+
+    return nodes;
+  }, [connected, state.config.url, gatewayNodes]);
 
   // Measure latency
   const measureLatency = useCallback(async () => {
@@ -198,11 +271,12 @@ export default function Status() {
     channels.refresh();
     tokenUsage.refresh();
     measureLatency();
+    fetchGatewayNodes();
     setTimeout(() => setRefreshing(false), 600);
-  }, [gatewayStatus, channels, tokenUsage, measureLatency]);
+  }, [gatewayStatus, channels, tokenUsage, measureLatency, fetchGatewayNodes]);
 
-  // Token usage data
-  const usage = tokenUsage.data;
+  // Token usage data — prefer dedicated hook, fallback to status response
+  const usage = tokenUsage.data ?? statusData?.tokenUsage ?? null;
   const trend = usage?.trend || [];
 
   // Compute yesterday comparison
@@ -234,21 +308,22 @@ export default function Status() {
         {gatewayStatus.loading && !statusData ? (
           <SkeletonCard lines={3} />
         ) : (
-          <AnimatedCard title="Connection" icon="wifi" delay={0}>
-            {/* Edit toggle icon */}
-            <Pressable
-              onPress={editing ? handleCancelEdit : () => setEditing(true)}
-              style={styles.editIcon}
-              accessibilityRole="button"
-              accessibilityLabel={editing ? 'Cancel editing' : 'Edit connection'}
-            >
-              <Ionicons
-                name={editing ? 'close-outline' : 'create-outline'}
-                size={18}
-                color={colors.textMuted}
-              />
-            </Pressable>
-
+          <AnimatedCard
+            title="Connection"
+            icon="wifi"
+            delay={0}
+            headerRight={
+              <Pressable
+                onPress={editing ? handleCancelEdit : () => setEditing(true)}
+                accessibilityRole="button"
+                accessibilityLabel={editing ? 'Cancel editing' : 'Edit connection'}
+              >
+                <Text style={{ color: colors.accent, fontSize: typography.small.fontSize, fontWeight: '600' }}>
+                  {editing ? 'Cancel' : 'Edit'}
+                </Text>
+              </Pressable>
+            }
+          >
             {editing ? (
               <View>
                 <Text
@@ -391,7 +466,22 @@ export default function Status() {
         )}
 
         {/* ─── Model ────────────────────────────────────────────── */}
-        <AnimatedCard title="Model" icon="hardware-chip" delay={80}>
+        <AnimatedCard
+          title="Model"
+          icon="hardware-chip"
+          delay={80}
+          headerRight={
+            <Pressable
+              onPress={() => setShowModelPicker(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Edit model"
+            >
+              <Text style={{ color: colors.accent, fontSize: typography.small.fontSize, fontWeight: '600' }}>
+                Edit
+              </Text>
+            </Pressable>
+          }
+        >
           <Row label="Name" value={statusData?.model || '—'} />
           <Row
             label="Provider"
@@ -407,6 +497,13 @@ export default function Status() {
           />
           <Row label="Context" value={statusData?.model ? '—' : '—'} />
         </AnimatedCard>
+        <ModelPicker
+          visible={showModelPicker}
+          onClose={() => {
+            setShowModelPicker(false);
+            gatewayStatus.refresh();
+          }}
+        />
 
         {/* ─── Token Usage ──────────────────────────────────────── */}
         {tokenUsage.loading && !usage ? (
@@ -693,13 +790,6 @@ export default function Status() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: {},
-  editIcon: {
-    position: 'absolute',
-    top: 0,
-    right: 8,
-    padding: 4,
-    zIndex: 1,
-  },
   editLabel: {
     textTransform: 'uppercase',
     letterSpacing: 1,

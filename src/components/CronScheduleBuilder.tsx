@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
+import { cronToHuman } from '../utils/cronToHuman';
 
 interface CronScheduleBuilderProps {
   value: string;
@@ -24,42 +25,6 @@ const PRESETS: PresetOption[] = [
 ];
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function cronToHuman(cron: string): string {
-  const parts = cron.split(' ');
-  if (parts.length !== 5) return cron;
-  const [min, hour, dom, , dow] = parts;
-
-  const preset = PRESETS.find((p) => p.cron === cron);
-  if (preset) return preset.human;
-
-  let desc = 'Runs';
-
-  if (min.startsWith('*/')) {
-    desc += ` every ${min.slice(2)} minutes`;
-  } else if (hour.startsWith('*/')) {
-    desc += ` every ${hour.slice(2)} hours`;
-  } else if (hour !== '*' && min !== '*') {
-    const h = parseInt(hour, 10);
-    const m = parseInt(min, 10);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    desc += ` at ${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
-  }
-
-  if (dow !== '*') {
-    const dayIdx = parseInt(dow, 10);
-    if (dayIdx >= 0 && dayIdx <= 6) {
-      desc += ` on ${WEEKDAYS[dayIdx]}`;
-    }
-  } else if (dom !== '*') {
-    desc += ` on day ${dom}`;
-  } else if (hour !== '*' && !hour.startsWith('*/')) {
-    desc += ' every day';
-  }
-
-  return desc;
-}
 
 export const CronScheduleBuilder: React.FC<CronScheduleBuilderProps> = ({
   value,

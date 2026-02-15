@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { CronExpressionParser } from 'cron-parser';
 import {
   GatewayStatus,
   CronJob,
@@ -15,6 +16,7 @@ import {
   PairedNode,
   WSConnectionState,
 } from '../types';
+import { cronToHuman } from '../utils/cronToHuman';
 
 type MessageHandler = (message: Message) => void;
 type WSStateHandler = (state: WSConnectionState) => void;
@@ -161,6 +163,7 @@ export class GatewayClient {
   private connectNonce: string | null = null;
   private connectSent = false;
   private sessionKey = 'main';
+  private _agentId: string | null = null;
 
   constructor(url: string, token: string) {
     this.url = url.replace(/\/+$/, '');
@@ -321,7 +324,7 @@ export class GatewayClient {
     }
 
     try {
-      await this.rpc('connect', {
+      const connectResult = await this.rpc<Record<string, unknown>>('connect', {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
@@ -336,6 +339,13 @@ export class GatewayClient {
         auth: this.token ? { token: this.token } : undefined,
         caps: [],
       });
+
+      // Extract agentId from the connect response
+      if (connectResult && typeof connectResult.agentId === 'string') {
+        this._agentId = connectResult.agentId;
+      } else if (connectResult && typeof connectResult.nodeId === 'string') {
+        this._agentId = connectResult.nodeId;
+      }
 
       this._isAuthenticated = true;
       this.backoffMs = 800;
@@ -547,25 +557,44 @@ export class GatewayClient {
     }>('sessions.list', {});
 
     const raw = Array.isArray(result?.sessions) ? result.sessions : [];
-    return raw.map((s) => ({
-      id: typeof s.key === 'string' ? s.key : typeof s.id === 'string' ? s.id : uuid(),
-      title:
-        typeof s.title === 'string'
-          ? s.title
-          : typeof s.key === 'string'
-          ? s.key
-          : 'Session',
-      createdAt:
-        typeof s.createdAt === 'string'
-          ? s.createdAt
-          : new Date().toISOString(),
-      updatedAt:
-        typeof s.updatedAt === 'string'
-          ? s.updatedAt
-          : new Date().toISOString(),
-      messageCount:
-        typeof s.messageCount === 'number' ? s.messageCount : 0,
-    }));
+    return raw.map((s) => {
+      // Parse timestamps robustly — the gateway may return strings, numbers (epoch ms), or omit them
+      const parseTimestamp = (val: unknown): string | null => {
+        if (typeof val === 'string' && val.length > 0) {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) return d.toISOString();
+        }
+        if (typeof val === 'number' && val > 0) {
+          return new Date(val).toISOString();
+        }
+        return null;
+      };
+
+      const createdAt = parseTimestamp(s.createdAt) ?? parseTimestamp(s.created_at);
+      const updatedAt = parseTimestamp(s.updatedAt) ?? parseTimestamp(s.updated_at);
+
+      // Use the best available timestamp; never fall back to "now" which causes
+      // stale sessions to always appear as "just now" on every poll.
+      const bestTimestamp = updatedAt ?? createdAt ?? null;
+
+      return {
+        id: typeof s.key === 'string' ? s.key : typeof s.id === 'string' ? s.id : uuid(),
+        title:
+          typeof s.title === 'string'
+            ? s.title
+            : typeof s.key === 'string'
+            ? s.key
+            : 'Session',
+        createdAt: createdAt ?? bestTimestamp ?? new Date(0).toISOString(),
+        updatedAt: bestTimestamp ?? new Date(0).toISOString(),
+        messageCount:
+          typeof s.messageCount === 'number'
+            ? s.messageCount
+            : typeof s.message_count === 'number'
+            ? s.message_count
+            : 0,
+      };
+    });
   }
 
   async deleteSession(sessionKey: string): Promise<void> {
@@ -583,6 +612,22 @@ export class GatewayClient {
       this.rpc<Record<string, unknown>>('status', {}),
       this.rpc<Record<string, unknown>>('health', {}).catch(() => null),
     ]);
+
+    // Opportunistically cache agentId from the status response
+    if (!this._agentId) {
+      for (const key of ['agentId', 'agent_id', 'nodeId', 'node_id']) {
+        if (typeof status[key] === 'string' && status[key]) {
+          this._agentId = status[key] as string;
+          break;
+        }
+      }
+      if (!this._agentId) {
+        const agent = status.agent as Record<string, unknown> | undefined;
+        if (agent && typeof agent.id === 'string' && agent.id) {
+          this._agentId = agent.id;
+        }
+      }
+    }
 
     // Extract model from nested sessions.defaults.model
     const sessions = status.sessions as Record<string, unknown> | undefined;
@@ -616,6 +661,31 @@ export class GatewayClient {
     const version =
       typeof status.version === 'string' ? status.version : undefined;
 
+    // Try to extract token usage from status response
+    let tokenUsage: TokenUsage | undefined;
+    for (const key of ['usage', 'tokenUsage', 'tokens']) {
+      const val = status[key];
+      if (val && typeof val === 'object') {
+        const extracted = this.extractUsageData(val as Record<string, unknown>);
+        if (extracted) {
+          tokenUsage = extracted;
+          break;
+        }
+      }
+    }
+    if (!tokenUsage && sessions) {
+      for (const key of ['usage', 'tokenUsage', 'tokens']) {
+        const val = sessions[key];
+        if (val && typeof val === 'object') {
+          const extracted = this.extractUsageData(val as Record<string, unknown>);
+          if (extracted) {
+            tokenUsage = extracted;
+            break;
+          }
+        }
+      }
+    }
+
     return {
       connected: true,
       model,
@@ -623,6 +693,7 @@ export class GatewayClient {
       version: version || '—',
       channels: [],
       sessionId,
+      tokenUsage,
     };
   }
 
@@ -634,58 +705,246 @@ export class GatewayClient {
     }>('cron.list', { includeDisabled: true });
 
     const raw = Array.isArray(result?.jobs) ? result.jobs : [];
-    return raw.map((j) => ({
-      id: String(j.id ?? j.name ?? ''),
-      name: String(j.name ?? ''),
-      schedule: String(j.schedule ?? j.cronExpr ?? ''),
-      scheduleHuman: String(j.scheduleHuman ?? j.description ?? ''),
-      enabled: j.enabled !== false,
-      lastRun:
-        typeof j.lastRun === 'string' ? j.lastRun : null,
-      lastStatus:
-        typeof j.lastStatus === 'string'
-          ? (j.lastStatus as CronJob['lastStatus'])
-          : null,
-      nextRun:
-        typeof j.nextRun === 'string' ? j.nextRun : null,
-    }));
+    return raw.map((j) => {
+      // schedule can be a string or an object { kind, expr, tz }
+      const scheduleObj = j.schedule as Record<string, unknown> | string | undefined;
+      const cronExpr =
+        typeof scheduleObj === 'string'
+          ? scheduleObj
+          : typeof scheduleObj === 'object' && scheduleObj !== null
+            ? String(scheduleObj.expr ?? '')
+            : String(j.cronExpr ?? '');
+      const scheduleTz =
+        typeof scheduleObj === 'object' && scheduleObj !== null
+          ? String(scheduleObj.tz ?? '')
+          : '';
+      const scheduleHuman = String(
+        j.scheduleHuman ?? j.description ?? cronToHuman(cronExpr)
+      );
+
+      // state may contain nextRunAtMs, lastRunAtMs, lastStatus
+      const state = (j.state ?? {}) as Record<string, unknown>;
+
+      // Resolve nextRun: prefer explicit nextRun string, then state.nextRunAtMs timestamp
+      let nextRun: string | null =
+        typeof j.nextRun === 'string'
+          ? j.nextRun
+          : typeof state.nextRunAtMs === 'number'
+            ? new Date(state.nextRunAtMs).toISOString()
+            : null;
+
+      // Fallback: compute nextRun from cron expression if still missing
+      if (!nextRun && cronExpr && j.enabled !== false) {
+        try {
+          const parseOpts = scheduleTz ? { tz: scheduleTz } : undefined;
+          const interval = CronExpressionParser.parse(cronExpr, parseOpts);
+          nextRun = interval.next().toISOString();
+        } catch {
+          // Invalid cron expression — leave nextRun as null
+        }
+      }
+
+      // Resolve lastRun: prefer explicit lastRun string, then state.lastRunAtMs timestamp
+      const lastRun: string | null =
+        typeof j.lastRun === 'string'
+          ? j.lastRun
+          : typeof state.lastRunAtMs === 'number'
+            ? new Date(state.lastRunAtMs).toISOString()
+            : null;
+
+      // Resolve lastStatus from job-level or state
+      const rawStatus = j.lastStatus ?? state.lastStatus;
+      const lastStatus: CronJob['lastStatus'] =
+        typeof rawStatus === 'string'
+          ? (rawStatus as CronJob['lastStatus'])
+          : null;
+
+      // Resolve lastError from job-level, state, or lastOutput when status is error
+      const rawError = j.lastError ?? state.lastError ?? j.error ?? state.error;
+      const lastError: string | null =
+        typeof rawError === 'string' && rawError.length > 0
+          ? rawError
+          : lastStatus === 'error' && typeof (j.lastOutput ?? state.lastOutput) === 'string'
+            ? String(j.lastOutput ?? state.lastOutput)
+            : null;
+
+      // Resolve input/command: the message or action the automation performs
+      const rawInput = j.input ?? j.command ?? j.message ?? j.prompt ?? j.action;
+      const input: string | undefined =
+        typeof rawInput === 'string' && rawInput.length > 0
+          ? rawInput
+          : undefined;
+
+      // Resolve description: human-readable explanation of the automation
+      const rawDesc = j.description ?? j.desc ?? j.summary;
+      const description: string | undefined =
+        typeof rawDesc === 'string' && rawDesc.length > 0
+          ? rawDesc
+          : undefined;
+
+      // Collect any extra fields not explicitly mapped
+      const mappedKeys = new Set([
+        'id', 'name', 'schedule', 'cronExpr', 'scheduleHuman',
+        'enabled', 'lastRun', 'lastStatus', 'lastError', 'nextRun',
+        'state', 'error', 'lastOutput', 'description', 'desc', 'summary',
+        'input', 'command', 'message', 'prompt', 'action',
+      ]);
+      const rawExtras: Record<string, unknown> = {};
+      for (const key of Object.keys(j)) {
+        if (!mappedKeys.has(key)) {
+          rawExtras[key] = j[key];
+        }
+      }
+
+      return {
+        id: String(j.id ?? j.name ?? ''),
+        name: String(j.name ?? ''),
+        schedule: cronExpr,
+        scheduleHuman: scheduleHuman,
+        enabled: j.enabled !== false,
+        lastRun,
+        lastStatus,
+        lastError,
+        nextRun,
+        input,
+        description,
+        rawExtras: Object.keys(rawExtras).length > 0 ? rawExtras : undefined,
+      };
+    });
   }
 
   async runCronJob(id: string): Promise<void> {
-    await this.rpc('cron.run', { id });
+    // Cron jobs can take a while — use a longer timeout (120s) so we
+    // don't falsely report failure while the job is still running.
+    await this.rpc('cron.run', { id }, CHAT_TIMEOUT_MS);
   }
 
   async toggleCronJob(id: string, enabled: boolean): Promise<void> {
-    await this.rpc('cron.update', { id, enabled });
+    await this.rpc('cron.update', { jobId: id, patch: { enabled } });
   }
 
   async getCronRunHistory(id: string): Promise<CronRunRecord[]> {
-    const result = await this.rpc<{
-      runs?: Record<string, unknown>[];
-    }>('cron.runs', { id });
+    let result: Record<string, unknown> | null = null;
 
-    const raw = Array.isArray(result?.runs) ? result.runs : [];
+    // Try the dedicated run history RPC — the gateway may use different
+    // method names or param keys depending on version.
+    try {
+      result = await this.rpc<Record<string, unknown>>('cron.runs', { id });
+    } catch {
+      // Fall back to alternative method name
+      try {
+        result = await this.rpc<Record<string, unknown>>('cron.history', { id });
+      } catch {
+        // Neither RPC exists — fall back to job-embedded history below
+      }
+    }
+
+    // The gateway may nest runs under various keys, or return the array directly
+    let raw: Record<string, unknown>[] = [];
+    if (result) {
+      if (Array.isArray(result)) {
+        raw = result as unknown as Record<string, unknown>[];
+      } else if (Array.isArray(result.runs)) {
+        raw = result.runs as Record<string, unknown>[];
+      } else if (Array.isArray(result.history)) {
+        raw = result.history as Record<string, unknown>[];
+      } else if (Array.isArray(result.records)) {
+        raw = result.records as Record<string, unknown>[];
+      }
+    }
+
+    // If the dedicated RPC returned nothing, try extracting history from
+    // the cron job object itself (some gateways embed it inline).
+    if (raw.length === 0) {
+      try {
+        const jobResult = await this.rpc<{ jobs?: Record<string, unknown>[] }>(
+          'cron.list',
+          { includeDisabled: true },
+        );
+        const jobs = Array.isArray(jobResult?.jobs) ? jobResult.jobs : [];
+        const job = jobs.find(
+          (j) => String(j.id ?? j.name ?? '') === id,
+        );
+        if (job) {
+          const embedded =
+            (job.runs ?? job.runHistory ?? job.run_history ?? job.history) as
+              | Record<string, unknown>[]
+              | undefined;
+          if (Array.isArray(embedded)) {
+            raw = embedded;
+          }
+
+          // Last resort: synthesize a single entry from the job's last-run info
+          // so the user always sees *something* if the job has run at all.
+          if (raw.length === 0) {
+            const st = (job.state ?? {}) as Record<string, unknown>;
+            const lastRunTs =
+              job.lastRun ?? st.lastRunAtMs ?? job.last_run ?? st.last_run_at_ms;
+            if (lastRunTs) {
+              const ts =
+                typeof lastRunTs === 'number'
+                  ? new Date(lastRunTs).toISOString()
+                  : String(lastRunTs);
+              const status = String(
+                job.lastStatus ?? st.lastStatus ?? st.last_status ?? 'success',
+              );
+              const errMsg =
+                job.lastError ?? st.lastError ?? job.error ?? st.error;
+              const output =
+                job.lastOutput ?? st.lastOutput ?? st.last_output;
+
+              raw = [
+                {
+                  id: `synth-${id}-${ts}`,
+                  startedAt: ts,
+                  completedAt: ts,
+                  status,
+                  output: typeof output === 'string' ? output : undefined,
+                  error: typeof errMsg === 'string' ? errMsg : undefined,
+                },
+              ];
+            }
+          }
+        }
+      } catch {
+        // Could not fetch job details either — return empty
+      }
+    }
+
     return raw.map((r) => ({
       id: String(r.id ?? ''),
-      startedAt: String(r.startedAt ?? ''),
+      startedAt: String(r.startedAt ?? r.started_at ?? ''),
       completedAt:
-        typeof r.completedAt === 'string' ? r.completedAt : null,
+        typeof r.completedAt === 'string'
+          ? r.completedAt
+          : typeof r.completed_at === 'string'
+            ? r.completed_at
+            : null,
       status:
         typeof r.status === 'string'
           ? (r.status as CronRunRecord['status'])
           : 'success',
       output: typeof r.output === 'string' ? r.output : undefined,
+      error:
+        typeof r.error === 'string'
+          ? r.error
+          : typeof r.errorMessage === 'string'
+            ? r.errorMessage
+            : typeof r.error_message === 'string'
+              ? r.error_message
+              : undefined,
       duration: typeof r.duration === 'number' ? r.duration : undefined,
     }));
   }
 
   async createCronJob(job: Partial<CronJob>): Promise<CronJob> {
     const result = await this.rpc<Record<string, unknown>>('cron.add', job);
+    const schedule = String(result?.schedule ?? job.schedule ?? '');
     return {
       id: String(result?.id ?? job.name ?? ''),
       name: String(result?.name ?? job.name ?? ''),
-      schedule: String(result?.schedule ?? job.schedule ?? ''),
-      scheduleHuman: String(result?.scheduleHuman ?? ''),
+      schedule,
+      scheduleHuman: String(result?.scheduleHuman || cronToHuman(schedule)),
       enabled: true,
       lastRun: null,
       lastStatus: null,
@@ -698,14 +957,15 @@ export class GatewayClient {
     patch: Partial<CronJob>
   ): Promise<CronJob> {
     const result = await this.rpc<Record<string, unknown>>('cron.update', {
-      id,
-      ...patch,
+      jobId: id,
+      patch,
     });
+    const schedule = String(result?.schedule ?? patch.schedule ?? '');
     return {
       id: String(result?.id ?? id),
       name: String(result?.name ?? patch.name ?? ''),
-      schedule: String(result?.schedule ?? patch.schedule ?? ''),
-      scheduleHuman: String(result?.scheduleHuman ?? ''),
+      schedule,
+      scheduleHuman: String(result?.scheduleHuman || cronToHuman(schedule)),
       enabled: patch.enabled !== false,
       lastRun: null,
       lastStatus: null,
@@ -732,26 +992,263 @@ export class GatewayClient {
       ? result
       : [];
 
-    return (raw as Record<string, unknown>[]).map((s) => ({
-      id: String(s.id ?? s.name ?? ''),
-      name: String(s.name ?? ''),
-      description: String(s.description ?? ''),
-      icon: String(s.icon ?? ''),
-      enabled: s.enabled !== false,
-      version: typeof s.version === 'string' ? s.version : undefined,
-    }));
+    return (raw as Record<string, unknown>[]).map((s) => {
+      // Extract usage stats if present
+      const rawUsage = s.usage as Record<string, unknown> | undefined;
+      const usage = rawUsage && typeof rawUsage === 'object'
+        ? {
+            count: typeof rawUsage.count === 'number' ? rawUsage.count : 0,
+            lastUsed: typeof rawUsage.lastUsed === 'string' ? rawUsage.lastUsed : null,
+          }
+        : undefined;
+
+      return {
+        id: String(s.id ?? s.skillKey ?? s.name ?? ''),
+        name: String(s.name ?? ''),
+        description: String(s.description ?? ''),
+        icon: String(s.icon ?? ''),
+        enabled: s.disabled !== true && s.enabled !== false,
+        version: typeof s.version === 'string' ? s.version : undefined,
+        filePath: typeof s.filePath === 'string' ? s.filePath : undefined,
+        baseDir: typeof s.baseDir === 'string' ? s.baseDir : undefined,
+        emoji: typeof s.emoji === 'string' ? s.emoji : undefined,
+        homepage: typeof s.homepage === 'string' ? s.homepage : undefined,
+        usage,
+      };
+    });
   }
 
   async toggleSkill(id: string, enabled: boolean): Promise<void> {
     await this.rpc('skills.update', { id, enabled });
   }
 
+  /**
+   * Fetch documentation for a specific skill by reading its SKILL.md file.
+   * The filePath comes from the skills.status response.
+   *
+   * Primary strategy: read the file via the Metro dev server middleware
+   * (metro.config.js exposes /api/readfile?path=...).
+   * Fallback: try gateway RPC methods.
+   */
+  async getSkillDocs(id: string, filePath?: string): Promise<string | null> {
+    const raw = await this._fetchSkillDocsRaw(id, filePath);
+    if (!raw) return null;
+    // Strip YAML frontmatter (--- delimited block at start of file)
+    return GatewayClient.stripFrontmatter(raw);
+  }
+
+  /**
+   * Strip YAML frontmatter from markdown content.
+   * Frontmatter is a block delimited by --- at the very start of the file.
+   */
+  private static stripFrontmatter(md: string): string {
+    const trimmed = md.trimStart();
+    if (!trimmed.startsWith('---')) return md;
+    // Find the closing ---
+    const endIdx = trimmed.indexOf('---', 3);
+    if (endIdx === -1) return md;
+    // Return everything after the closing --- (skip the newline after it)
+    const afterFrontmatter = trimmed.slice(endIdx + 3).replace(/^\r?\n/, '');
+    return afterFrontmatter.trimStart();
+  }
+
+  private async _fetchSkillDocsRaw(id: string, filePath?: string): Promise<string | null> {
+    // Strategy 1: Read the SKILL.md via Metro dev server middleware.
+    // The Metro dev server runs on the same host and can read local files.
+    if (filePath) {
+      try {
+        // In Expo Go / dev mode, the Metro bundler URL is available via __DEV__
+        // and typically runs on port 8081. We try common origins.
+        const metroOrigins = [
+          'http://localhost:8081',
+          'http://127.0.0.1:8081',
+          'http://192.168.1.128:8081', // local network IP from terminal
+        ];
+        for (const origin of metroOrigins) {
+          try {
+            const resp = await fetch(
+              `${origin}/api/readfile?path=${encodeURIComponent(filePath)}`,
+              { headers: { Accept: 'text/plain' } }
+            );
+            if (resp.ok) {
+              const contentType = resp.headers.get('content-type') || '';
+              // Only accept plain text, not HTML (avoid gateway SPA fallback)
+              if (contentType.includes('text/plain') || contentType.includes('text/markdown')) {
+                const text = await resp.text();
+                if (text && text.length > 10 && !text.trimStart().startsWith('<!')) {
+                  return text;
+                }
+              }
+            }
+          } catch {
+            // This origin not reachable, try next
+          }
+        }
+      } catch {
+        // Metro middleware not available
+      }
+    }
+
+    // Strategy 2: Try describe_skill RPC (Skills Protocol)
+    try {
+      const result = await this.rpc<Record<string, unknown>>(
+        'describe_skill',
+        { id, detail: 'full' }
+      );
+      const content =
+        typeof result?.skill_md_content === 'string' ? result.skill_md_content :
+        typeof result?.content === 'string' ? result.content :
+        typeof result?.docs === 'string' ? result.docs :
+        typeof result?.documentation === 'string' ? result.documentation :
+        null;
+      if (content) return content;
+    } catch {
+      // describe_skill not available
+    }
+
+    // Strategy 3: Try read_skill_file RPC (Skills Protocol)
+    if (filePath) {
+      try {
+        const result = await this.rpc<Record<string, unknown>>(
+          'read_skill_file',
+          { id, path: filePath }
+        );
+        const content =
+          typeof result === 'string' ? result :
+          typeof result?.content === 'string' ? result.content :
+          typeof result?.data === 'string' ? result.data :
+          null;
+        if (content) return content;
+      } catch {
+        // read_skill_file not available
+      }
+    }
+
+    return null;
+  }
+
   async getClawHubSkills(
-    _query?: string,
-    _category?: string
+    query?: string,
+    category?: string
   ): Promise<Skill[]> {
-    // ClawHub browsing may not be available via RPC; return empty
+    // Strategy 1: Try gateway RPC methods for ClawHub browsing.
+    const rpcParams: Record<string, unknown> = {};
+    if (query) rpcParams.query = query;
+    if (category) rpcParams.category = category;
+
+    const rpcMethods = ['clawhub.search', 'clawhub.list'];
+    for (const method of rpcMethods) {
+      try {
+        const result = await this.rpc<Record<string, unknown> | Record<string, unknown>[]>(
+          method,
+          rpcParams
+        );
+        const raw = Array.isArray(result)
+          ? result
+          : Array.isArray((result as Record<string, unknown>)?.skills)
+            ? (result as Record<string, unknown>).skills as Record<string, unknown>[]
+            : Array.isArray((result as Record<string, unknown>)?.items)
+              ? (result as Record<string, unknown>).items as Record<string, unknown>[]
+              : null;
+        if (raw && raw.length > 0) {
+          return this.parseClawHubSkills(raw as Record<string, unknown>[]);
+        }
+      } catch {
+        // This RPC method not available, try next
+      }
+    }
+
+    // Strategy 2: Fetch from the ClawHub public REST API (clawhub.ai).
+    try {
+      return await this.fetchClawHubREST(query, category);
+    } catch {
+      // ClawHub REST API not reachable
+    }
+
     return [];
+  }
+
+  /**
+   * Fetch skills from the ClawHub public REST API at clawhub.ai/api/v1/skills.
+   * Response shape: { items: [...], nextCursor?: string }
+   * Item shape: { slug, displayName, summary, tags, stats, createdAt, updatedAt, latestVersion }
+   */
+  private async fetchClawHubREST(
+    query?: string,
+    category?: string
+  ): Promise<Skill[]> {
+    const baseUrl = 'https://clawhub.ai/api/v1/skills';
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (category) params.set('category', category);
+    const url = params.toString() ? `${baseUrl}?${params}` : baseUrl;
+
+    const resp = await fetch(url, {
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!resp.ok) return [];
+
+    const text = await resp.text();
+    // Guard against HTML responses (e.g. redirects or error pages)
+    if (text.trimStart().startsWith('<!') || text.trimStart().startsWith('<html')) {
+      return [];
+    }
+
+    const data = JSON.parse(text);
+    const raw: Record<string, unknown>[] = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.skills)
+          ? data.skills
+          : [];
+
+    return this.parseClawHubSkills(raw);
+  }
+
+  /**
+   * Normalize raw ClawHub skill objects into our Skill interface.
+   * Handles both gateway RPC shape and the clawhub.ai REST API shape:
+   *   REST: { slug, displayName, summary, tags: { latest }, stats, latestVersion: { version } }
+   *   RPC:  { id, name, description, icon, version }
+   */
+  private parseClawHubSkills(raw: Record<string, unknown>[]): Skill[] {
+    return raw.map((s) => {
+      // Extract version from either direct field or nested structures
+      const latestVersion = s.latestVersion as Record<string, unknown> | undefined;
+      const tags = s.tags as Record<string, unknown> | undefined;
+      const version =
+        typeof s.version === 'string'
+          ? s.version
+          : typeof latestVersion?.version === 'string'
+            ? latestVersion.version
+            : typeof tags?.latest === 'string'
+              ? tags.latest
+              : undefined;
+
+      // Extract download/star count for display
+      const stats = s.stats as Record<string, unknown> | undefined;
+      const downloads = typeof stats?.downloads === 'number' ? stats.downloads : 0;
+
+      return {
+        id: String(s.id ?? s.slug ?? s.skillKey ?? s.name ?? ''),
+        name: String(s.displayName ?? s.name ?? s.title ?? s.slug ?? ''),
+        description: String(s.summary ?? s.description ?? s.short_description ?? ''),
+        icon: String(s.icon ?? s.emoji ?? ''),
+        enabled: true,
+        version,
+        homepage: typeof s.homepage === 'string'
+          ? s.homepage
+          : typeof s.url === 'string'
+            ? s.url
+            : typeof s.slug === 'string'
+              ? `https://clawhub.ai/skills/${s.slug}`
+              : undefined,
+        source: 'clawhub' as const,
+        usage: downloads > 0 ? { count: downloads, lastUsed: null } : undefined,
+      };
+    });
   }
 
   async installSkill(id: string): Promise<void> {
@@ -760,20 +1257,163 @@ export class GatewayClient {
 
   // ─── Token Usage ────────────────────────────────────────────────────
 
+  /**
+   * Extract token usage data from a raw object, handling various field naming
+   * conventions the gateway may use.
+   */
+  private extractUsageData(obj: Record<string, unknown>): TokenUsage | null {
+    const today =
+      typeof obj.today === 'number' ? obj.today :
+      typeof obj.todayTokens === 'number' ? obj.todayTokens :
+      typeof obj.tokens_today === 'number' ? obj.tokens_today :
+      typeof obj.dailyTokens === 'number' ? obj.dailyTokens : 0;
+
+    const total =
+      typeof obj.total === 'number' ? obj.total :
+      typeof obj.totalTokens === 'number' ? obj.totalTokens :
+      typeof obj.tokens_total === 'number' ? obj.tokens_total :
+      typeof obj.allTimeTokens === 'number' ? obj.allTimeTokens : 0;
+
+    if (today === 0 && total === 0) return null;
+
+    const limit =
+      typeof obj.limit === 'number' ? obj.limit : undefined;
+    const estimatedCost =
+      typeof obj.estimatedCost === 'number' ? obj.estimatedCost :
+      typeof obj.cost === 'number' ? obj.cost : undefined;
+    const trend = Array.isArray(obj.trend) ? obj.trend : [];
+
+    return { today, total, trend, limit, estimatedCost };
+  }
+
   async getTokenUsage(): Promise<TokenUsage> {
+    // Track the best result across strategies.
+    // Only return early if we have BOTH total > 0 AND today > 0.
+    // If we only have total (today === 0), keep trying other strategies
+    // that may compute the daily breakdown.
+    let bestResult: TokenUsage | null = null;
+
+    const keepBest = (candidate: TokenUsage | null): boolean => {
+      if (!candidate) return false;
+      // Complete data (today > 0) — use immediately
+      if (candidate.today > 0) {
+        bestResult = candidate;
+        return true;
+      }
+      // Partial data (total > 0 but today = 0) — save but keep looking
+      if (!bestResult || candidate.total > bestResult.total) {
+        bestResult = candidate;
+      }
+      return false;
+    };
+
+    // Strategy 1: Try dedicated sessions.usage RPC
     try {
       const result = await this.rpc<Record<string, unknown>>(
         'sessions.usage',
         {}
       );
-      return {
-        today: typeof result?.today === 'number' ? result.today : 0,
-        total: typeof result?.total === 'number' ? result.total : 0,
-        trend: Array.isArray(result?.trend) ? result.trend : [],
-      };
-    } catch {
-      return { today: 0, total: 0, trend: [] };
+      if (result && typeof result === 'object') {
+        // Direct fields on result (e.g. { today: N, total: N })
+        if (keepBest(this.extractUsageData(result))) return bestResult!;
+
+        // Nested under a "usage" key (e.g. { usage: { today: N, total: N } })
+        if (typeof result.usage === 'object' && result.usage !== null) {
+          if (keepBest(this.extractUsageData(result.usage as Record<string, unknown>))) return bestResult!;
+        }
+      }
+    } catch (e) {
+      // sessions.usage may not be supported — fall through to alternatives
+      console.warn('[Gateway] sessions.usage failed, trying fallbacks:', e instanceof Error ? e.message : e);
     }
+
+    // Strategy 2: Extract usage from the status RPC (which we know works)
+    try {
+      const status = await this.rpc<Record<string, unknown>>('status', {});
+
+      // Check top-level paths: status.usage, status.tokenUsage, status.tokens
+      for (const key of ['usage', 'tokenUsage', 'tokens']) {
+        const val = status[key];
+        if (val && typeof val === 'object') {
+          if (keepBest(this.extractUsageData(val as Record<string, unknown>))) return bestResult!;
+        }
+      }
+
+      // Check nested under sessions: status.sessions.usage, etc.
+      const sessions = status.sessions as Record<string, unknown> | undefined;
+      if (sessions) {
+        for (const key of ['usage', 'tokenUsage', 'tokens']) {
+          const val = sessions[key];
+          if (val && typeof val === 'object') {
+            if (keepBest(this.extractUsageData(val as Record<string, unknown>))) return bestResult!;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Gateway] status RPC for usage data failed:', e instanceof Error ? e.message : e);
+    }
+
+    // Strategy 3: Aggregate token counts from sessions.list
+    // Always attempt this if we still don't have a daily total
+    try {
+      const result = await this.rpc<Record<string, unknown>>('sessions.list', {});
+
+      // Check for top-level usage data in the response
+      if (result && typeof result === 'object') {
+        for (const key of ['usage', 'tokenUsage', 'tokens']) {
+          const val = result[key];
+          if (val && typeof val === 'object') {
+            if (keepBest(this.extractUsageData(val as Record<string, unknown>))) return bestResult!;
+          }
+        }
+      }
+
+      // Sum per-session token counts and compute daily total from timestamps
+      const sessionsArr = Array.isArray(result?.sessions) ? result.sessions as Record<string, unknown>[] : [];
+      if (sessionsArr.length > 0) {
+        let total = 0;
+        let today = 0;
+        const now = new Date();
+        const todayUTC = now.toISOString().slice(0, 10);
+        // Also compute local date string for matching (handles timezone offset)
+        const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+        for (const s of sessionsArr) {
+          const tokens =
+            typeof s.totalTokens === 'number' ? s.totalTokens :
+            typeof s.tokens === 'number' ? s.tokens :
+            typeof s.tokenCount === 'number' ? s.tokenCount : 0;
+          total += tokens;
+
+          // Check multiple timestamp fields for "today" matching
+          const tsFields = [s.updatedAt, s.updated_at, s.createdAt, s.created_at, s.lastActive, s.timestamp];
+          const tsValue = tsFields.find((f) => typeof f === 'string' && f.length > 0) as string | undefined;
+
+          if (tsValue) {
+            // Match against both UTC and local date strings
+            if (tsValue.startsWith(todayUTC) || tsValue.startsWith(todayLocal)) {
+              today += tokens;
+            }
+          }
+        }
+
+        if (total > 0) {
+          // If we had a bestResult from an earlier strategy with extra fields
+          // (limit, estimatedCost, trend), merge session-computed today into it
+          if (bestResult && bestResult.today === 0) {
+            return { ...bestResult, today, total: Math.max(bestResult.total, total) };
+          }
+          return { today, total, trend: [] };
+        }
+      }
+    } catch (e) {
+      console.warn('[Gateway] sessions.list for usage data failed:', e instanceof Error ? e.message : e);
+    }
+
+    if (bestResult) return bestResult;
+
+    console.warn('[Gateway] All token usage strategies returned no data');
+    return { today: 0, total: 0, trend: [] };
   }
 
   // ─── Channels ───────────────────────────────────────────────────────
@@ -813,44 +1453,211 @@ export class GatewayClient {
 
   // ─── Activity Feed ──────────────────────────────────────────────────
 
+  /**
+   * Build a composite activity feed by aggregating recent data from
+   * chat sessions, cron runs, and channels.
+   */
   async getActivityFeed(): Promise<ActivityEvent[]> {
-    // No direct RPC equivalent; return empty for now
-    return [];
+    const events: ActivityEvent[] = [];
+
+    // 1. Recent chat sessions → activity events
+    try {
+      const sessions = await this.getChatSessions();
+      for (const s of sessions.slice(0, 10)) {
+        events.push({
+          id: `chat-${s.id}`,
+          text: `Chat session "${s.title}" (${s.messageCount} messages)`,
+          category: 'chat',
+          timestamp: s.updatedAt,
+          icon: 'chatbubble',
+          entityId: s.id,
+        });
+      }
+    } catch {
+      // silently skip if chat sessions unavailable
+    }
+
+    // 2. Recent cron runs → activity events
+    try {
+      const jobs = await this.getCronJobs();
+      for (const job of jobs) {
+        if (job.lastRun) {
+          const statusEmoji = job.lastStatus === 'success' ? '✓' : job.lastStatus === 'error' ? '✗' : '…';
+          events.push({
+            id: `cron-${job.id}`,
+            text: `Cron "${job.name}" ${statusEmoji} ${job.lastStatus ?? 'ran'}`,
+            category: 'cron',
+            timestamp: job.lastRun,
+            icon: 'timer',
+            entityId: job.id,
+          });
+        }
+      }
+    } catch {
+      // silently skip if cron jobs unavailable
+    }
+
+    // 3. Channel status → activity events
+    try {
+      const channels = await this.getChannels();
+      for (const ch of channels) {
+        if (ch.status === 'active' || ch.status === 'error') {
+          events.push({
+            id: `channel-${ch.name}`,
+            text: `Channel "${ch.name}" ${ch.status}`,
+            category: 'channel',
+            timestamp: ch.lastFlap ?? new Date().toISOString(),
+            icon: ch.status === 'active' ? 'radio' : 'warning',
+            entityId: ch.name,
+          });
+        }
+      }
+    } catch {
+      // silently skip if channels unavailable
+    }
+
+    // Sort newest first
+    events.sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    return events;
+  }
+
+  // ─── Agent ID resolution ────────────────────────────────────────────
+
+  private async resolveAgentId(): Promise<string> {
+    // Return cached agentId if available
+    if (this._agentId) return this._agentId;
+
+    // Strategy 1: Try the status response for agent/node info
+    try {
+      const status = await this.rpc<Record<string, unknown>>('status', {});
+      for (const key of ['agentId', 'agent_id', 'nodeId', 'node_id']) {
+        if (typeof status[key] === 'string' && status[key]) {
+          this._agentId = status[key] as string;
+          return this._agentId;
+        }
+      }
+      // Check nested agent object
+      const agent = status.agent as Record<string, unknown> | undefined;
+      if (agent && typeof agent.id === 'string' && agent.id) {
+        this._agentId = agent.id;
+        return this._agentId;
+      }
+    } catch {
+      // status call failed, try next strategy
+    }
+
+    // Strategy 2: Try agents.list to discover available agents
+    try {
+      const result = await this.rpc<Record<string, unknown>>('agents.list', {});
+      const agents = Array.isArray(result)
+        ? result
+        : Array.isArray((result as Record<string, unknown>)?.agents)
+        ? ((result as Record<string, unknown>).agents as Record<string, unknown>[])
+        : [];
+      if (agents.length > 0) {
+        const first = agents[0];
+        const id = typeof first === 'string' ? first : String(first.id ?? first.agentId ?? '');
+        if (id) {
+          this._agentId = id;
+          return id;
+        }
+      }
+    } catch {
+      // agents.list not available, try next strategy
+    }
+
+    // Strategy 3: Try node.list
+    try {
+      const nodes = await this.getPairedNodes();
+      const online = nodes.find((n) => n.status === 'online');
+      const node = online ?? nodes[0];
+      if (node?.id) {
+        this._agentId = node.id;
+        return node.id;
+      }
+    } catch {
+      // node.list not available
+    }
+
+    // Strategy 4: Use "default" as a fallback — many single-agent gateways accept this
+    this._agentId = 'default';
+    return 'default';
   }
 
   // ─── Memory / Agent Files ───────────────────────────────────────────
 
   async getMemoryFiles(): Promise<MemoryFile[]> {
-    try {
-      const result = await this.rpc<{
-        files?: Record<string, unknown>[];
-      }>('agents.files.list', {});
+    const agentId = await this.resolveAgentId();
+    const result = await this.rpc<
+      Record<string, unknown> | Record<string, unknown>[]
+    >('agents.files.list', { agentId });
 
-      const raw = Array.isArray(result?.files) ? result.files : [];
-      return raw.map((f) => ({
+    // The response might be { files: [...] } or just a raw array
+    let raw: Record<string, unknown>[];
+    if (Array.isArray(result)) {
+      raw = result;
+    } else if (result && Array.isArray((result as Record<string, unknown>).files)) {
+      raw = (result as Record<string, unknown>).files as Record<string, unknown>[];
+    } else {
+      raw = [];
+    }
+
+    return raw.map((f) => {
+      // Content may be under different keys
+      let content = '';
+      for (const key of ['content', 'body', 'text', 'data']) {
+        if (typeof f[key] === 'string') {
+          content = f[key] as string;
+          break;
+        }
+      }
+      return {
         name: String(f.name ?? f.filename ?? ''),
-        content: typeof f.content === 'string' ? f.content : '',
+        content,
         lastModified:
           typeof f.lastModified === 'string'
             ? f.lastModified
+            : typeof f.updatedAt === 'string'
+            ? f.updatedAt
             : new Date().toISOString(),
-      }));
-    } catch {
-      return [];
-    }
+      };
+    });
   }
 
   async getMemoryFile(name: string): Promise<MemoryFile> {
+    const agentId = await this.resolveAgentId();
     const result = await this.rpc<Record<string, unknown>>(
       'agents.files.get',
-      { name }
+      { agentId, name }
     );
+
+    // The file data may be at the top level or nested under a 'file' key
+    const fileData =
+      result?.file && typeof result.file === 'object'
+        ? (result.file as Record<string, unknown>)
+        : result;
+
+    // Content may be under different keys
+    let content = '';
+    for (const key of ['content', 'body', 'text', 'data']) {
+      if (typeof fileData?.[key] === 'string') {
+        content = fileData[key] as string;
+        break;
+      }
+    }
+
     return {
-      name: String(result?.name ?? name),
-      content: typeof result?.content === 'string' ? result.content : '',
+      name: String(fileData?.name ?? fileData?.filename ?? name),
+      content,
       lastModified:
-        typeof result?.lastModified === 'string'
-          ? result.lastModified
+        typeof fileData?.lastModified === 'string'
+          ? fileData.lastModified
+          : typeof fileData?.updatedAt === 'string'
+          ? fileData.updatedAt
           : new Date().toISOString(),
     };
   }
@@ -859,7 +1666,8 @@ export class GatewayClient {
     name: string,
     content: string
   ): Promise<MemoryFile> {
-    await this.rpc('agents.files.set', { name, content });
+    const agentId = await this.resolveAgentId();
+    await this.rpc('agents.files.set', { agentId, name, content });
     return { name, content, lastModified: new Date().toISOString() };
   }
 
@@ -926,8 +1734,8 @@ export class GatewayClient {
     }
   }
 
-  async setModelOverride(_modelId: string | null): Promise<void> {
-    // Config-based; not a simple RPC call
+  async setModelOverride(modelId: string | null): Promise<void> {
+    await this.rpc('models.set', { model: modelId });
   }
 
   // ─── Push Token ─────────────────────────────────────────────────────
