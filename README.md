@@ -1,4 +1,4 @@
-# RawClaw 🐾
+# RawClaw
 
 > The mobile command center for your personal AI agent. Built for [OpenClaw](https://github.com/nichochar/openclaw).
 
