@@ -1,110 +1,238 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Switch, Modal } from 'react-native';
+import { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Pressable,
+  Switch,
+  ActivityIndicator,
+  RefreshControl,
+  Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { useTheme } from '../../src/theme';
+import { useStore } from '../../src/services/store';
+import {
+  ScreenHeader,
+  Badge,
+  SkeletonCard,
+  EmptyState,
+  ErrorState,
+  AnimatedCard,
+} from '../../src/components';
+import { useCronJobs } from '../../src/hooks';
 import { CronJob } from '../../src/types';
 
-const C = { bg: '#0a0a0f', surface: '#1a1a2e', card: '#16213e', accent: '#0ea5e9' };
-
-const PLACEHOLDER_JOBS: CronJob[] = [
-  { id: '1', name: 'Daily Summary', schedule: '0 9 * * *', scheduleHuman: 'Every day at 9:00 AM', enabled: true, lastRun: '2025-02-14T09:00:00Z', lastStatus: 'success', nextRun: '2025-02-15T09:00:00Z' },
-  { id: '2', name: 'Email Check', schedule: '*/30 * * * *', scheduleHuman: 'Every 30 minutes', enabled: true, lastRun: '2025-02-14T16:30:00Z', lastStatus: 'success', nextRun: '2025-02-14T17:00:00Z' },
-  { id: '3', name: 'Weather Alert', schedule: '0 7,18 * * *', scheduleHuman: 'Every day at 7 AM & 6 PM', enabled: true, lastRun: '2025-02-14T07:00:00Z', lastStatus: 'success', nextRun: '2025-02-14T18:00:00Z' },
-  { id: '4', name: 'Memory Cleanup', schedule: '0 3 * * 0', scheduleHuman: 'Every Sunday at 3:00 AM', enabled: false, lastRun: '2025-02-09T03:00:00Z', lastStatus: 'success', nextRun: '2025-02-16T03:00:00Z' },
-  { id: '5', name: 'Heartbeat Check', schedule: '*/15 * * * *', scheduleHuman: 'Every 15 minutes', enabled: true, lastRun: '2025-02-14T16:45:00Z', lastStatus: 'error', nextRun: '2025-02-14T17:00:00Z' },
-];
-
-function StatusBadge({ status }: { status: string | null }) {
-  const color = status === 'success' ? '#10b981' : status === 'error' ? '#ef4444' : '#888';
-  return (
-    <View style={[s.badge, { backgroundColor: color + '22' }]}>
-      <View style={[s.badgeDot, { backgroundColor: color }]} />
-      <Text style={[s.badgeText, { color }]}>{status || 'pending'}</Text>
-    </View>
-  );
-}
-
 export default function Automations() {
-  const [jobs, setJobs] = useState(PLACEHOLDER_JOBS);
-  const [selected, setSelected] = useState<CronJob | null>(null);
+  const { colors, spacing, radius, typography } = useTheme();
+  const { state } = useStore();
+  const router = useRouter();
+  const liveJobs = useCronJobs();
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [optimisticToggles, setOptimisticToggles] = useState<Record<string, boolean>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
-  const toggle = (id: string) => {
-    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, enabled: !j.enabled } : j)));
-  };
+  const jobs = liveJobs.data || [];
+
+  const toggle = useCallback(
+    async (id: string, currentEnabled: boolean) => {
+      if (!state.client) return;
+      // Optimistic update
+      setOptimisticToggles((prev) => ({ ...prev, [id]: !currentEnabled }));
+      try {
+        await state.client.toggleCronJob(id, !currentEnabled);
+        liveJobs.refresh();
+      } catch {
+        // Revert on failure
+        setOptimisticToggles((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        Alert.alert('Error', 'Failed to toggle automation. Please try again.');
+      }
+    },
+    [state.client, liveJobs]
+  );
+
+  const runNow = useCallback(
+    async (id: string) => {
+      if (!state.client) return;
+      setRunningId(id);
+      try {
+        await state.client.runCronJob(id);
+        liveJobs.refresh();
+      } catch {
+        Alert.alert('Error', 'Failed to run automation.');
+      } finally {
+        setRunningId(null);
+      }
+    },
+    [state.client, liveJobs]
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    liveJobs.refresh();
+    setTimeout(() => setRefreshing(false), 600);
+  }, [liveJobs]);
+
+  const getEnabled = (job: CronJob) =>
+    optimisticToggles[job.id] !== undefined ? optimisticToggles[job.id] : job.enabled;
+
+  const enabledCount = jobs.filter((j) => getEnabled(j)).length;
 
   return (
-    <SafeAreaView style={s.safe}>
-      <ScrollView contentContainerStyle={s.scroll}>
-        <Text style={s.title}>Automations</Text>
-        <Text style={s.subtitle}>{jobs.filter((j) => j.enabled).length} active</Text>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { padding: spacing.lg, paddingBottom: 100 }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
+        <ScreenHeader title="Automations" />
+        <Text style={[styles.subtitle, { color: colors.textMuted, marginBottom: spacing.lg }]}>
+          {enabledCount} active
+        </Text>
 
-        {jobs.map((job, i) => (
-          <Animated.View key={job.id} entering={FadeInDown.delay(i * 60).duration(350)}>
-            <Pressable style={s.card} onPress={() => setSelected(job)}>
-              <View style={s.cardTop}>
-                <Text style={s.jobName}>{job.name}</Text>
-                <Switch
-                  value={job.enabled}
-                  onValueChange={() => toggle(job.id)}
-                  trackColor={{ true: C.accent + '44', false: '#333' }}
-                  thumbColor={job.enabled ? C.accent : '#666'}
-                />
-              </View>
-              <Text style={s.schedule}>{job.scheduleHuman}</Text>
-              <View style={s.cardBottom}>
-                <StatusBadge status={job.lastStatus} />
-                <Pressable style={s.runBtn} onPress={() => {}}>
-                  <Ionicons name="play" size={14} color={C.accent} />
-                  <Text style={s.runText}>Run Now</Text>
+        {liveJobs.loading && !liveJobs.data ? (
+          <>
+            <SkeletonCard lines={3} />
+            <SkeletonCard lines={3} />
+            <SkeletonCard lines={3} />
+          </>
+        ) : liveJobs.error && !liveJobs.data ? (
+          <ErrorState message={liveJobs.error} onRetry={liveJobs.refresh} />
+        ) : jobs.length === 0 ? (
+          <EmptyState icon="timer-outline" message="No automations configured" />
+        ) : (
+          jobs.map((job, i) => {
+            const enabled = getEnabled(job);
+            return (
+              <AnimatedCard key={job.id} delay={i * 60}>
+                <Pressable
+                  onPress={() =>
+                    router.push(`/automations/${job.id}` as never)
+                  }
+                >
+                  <View style={styles.cardTop}>
+                    <Text
+                      style={[
+                        styles.jobName,
+                        {
+                          color: colors.text,
+                          fontSize: typography.heading.fontSize,
+                          fontWeight: typography.heading.fontWeight,
+                        },
+                      ]}
+                    >
+                      {job.name}
+                    </Text>
+                    <Switch
+                      value={enabled}
+                      onValueChange={() => toggle(job.id, job.enabled)}
+                      trackColor={{ true: colors.accent + '44', false: '#333' }}
+                      thumbColor={enabled ? colors.accent : '#666'}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.schedule,
+                      { color: colors.textMuted, marginTop: spacing.xs + 2 },
+                    ]}
+                  >
+                    {job.scheduleHuman}
+                  </Text>
+                  <View style={[styles.cardBottom, { marginTop: spacing.md - 2 }]}>
+                    <Badge status={job.lastStatus} />
+                    <Pressable
+                      style={styles.runBtn}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        runNow(job.id);
+                      }}
+                      disabled={runningId === job.id}
+                    >
+                      {runningId === job.id ? (
+                        <ActivityIndicator size="small" color={colors.accent} />
+                      ) : (
+                        <>
+                          <Ionicons name="play" size={14} color={colors.accent} />
+                          <Text style={[styles.runText, { color: colors.accent }]}>
+                            Run Now
+                          </Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
                 </Pressable>
-              </View>
-            </Pressable>
-          </Animated.View>
-        ))}
+              </AnimatedCard>
+            );
+          })
+        )}
       </ScrollView>
 
-      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
-        <Pressable style={s.modalOverlay} onPress={() => setSelected(null)}>
-          <View style={s.modal}>
-            <View style={s.modalHandle} />
-            {selected && (
-              <>
-                <Text style={s.modalTitle}>{selected.name}</Text>
-                <View style={s.modalRow}><Text style={s.modalLabel}>Schedule</Text><Text style={s.modalValue}>{selected.scheduleHuman}</Text></View>
-                <View style={s.modalRow}><Text style={s.modalLabel}>Cron</Text><Text style={[s.modalValue, { fontFamily: 'monospace' }]}>{selected.schedule}</Text></View>
-                <View style={s.modalRow}><Text style={s.modalLabel}>Last Run</Text><Text style={s.modalValue}>{selected.lastRun ? new Date(selected.lastRun).toLocaleString() : '—'}</Text></View>
-                <View style={s.modalRow}><Text style={s.modalLabel}>Status</Text><StatusBadge status={selected.lastStatus} /></View>
-                <View style={s.modalRow}><Text style={s.modalLabel}>Next Run</Text><Text style={s.modalValue}>{selected.nextRun ? new Date(selected.nextRun).toLocaleString() : '—'}</Text></View>
-              </>
-            )}
-          </View>
-        </Pressable>
-      </Modal>
+      {/* FAB for creating new automation */}
+      <Pressable
+        style={[
+          styles.fab,
+          {
+            backgroundColor: colors.accent,
+            borderRadius: 28,
+            bottom: 24,
+            right: spacing.lg,
+          },
+        ]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+          router.push('/automations/create' as never);
+        }}
+        accessibilityRole="button"
+        accessibilityLabel="Create new automation"
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </Pressable>
     </SafeAreaView>
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  scroll: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 28, fontWeight: '800', color: '#fff' },
-  subtitle: { color: '#888', fontSize: 14, marginBottom: 20, marginTop: 4 },
-  card: { backgroundColor: C.card, borderRadius: 16, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  jobName: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  schedule: { color: '#888', fontSize: 13, marginTop: 6 },
-  cardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 },
-  badge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, gap: 5 },
-  badgeDot: { width: 6, height: 6, borderRadius: 3 },
-  badgeText: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  scroll: {},
+  subtitle: { fontSize: 14, marginTop: -16 },
+  cardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  jobName: {},
+  schedule: { fontSize: 13 },
+  cardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   runBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  runText: { color: C.accent, fontSize: 13, fontWeight: '600' },
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  modal: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
-  modalHandle: { width: 40, height: 4, backgroundColor: '#444', borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
-  modalTitle: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 20 },
-  modalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-  modalLabel: { color: '#888', fontSize: 14 },
-  modalValue: { color: '#ddd', fontSize: 14, fontWeight: '500' },
+  runText: { fontSize: 13, fontWeight: '600' },
+  fab: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+  },
 });

@@ -1,11 +1,22 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Modal, Dimensions } from 'react-native';
+import { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Pressable,
+  Dimensions,
+  RefreshControl,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
+import { useTheme } from '../../src/theme';
+import { ScreenHeader, SkeletonCard, EmptyState, ErrorState } from '../../src/components';
+import { ClawHubBrowser } from '../../src/components/ClawHubBrowser';
+import { useSkills } from '../../src/hooks';
 import { Skill } from '../../src/types';
 
-const C = { bg: '#0a0a0f', surface: '#1a1a2e', card: '#16213e', accent: '#0ea5e9' };
 const COLS = 3;
 const GAP = 12;
 const PAD = 20;
@@ -22,77 +33,201 @@ const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   security: 'shield-checkmark', analytics: 'analytics', notification: 'notifications',
 };
 
-const PLACEHOLDER_SKILLS: Skill[] = Object.entries(ICONS).map(([key, icon], i) => ({
-  id: String(i),
-  name: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-  description: `The ${key} skill provides integration with ${key} services and functionality.`,
-  icon,
-  enabled: true,
-}));
+type TabType = 'installed' | 'clawhub';
 
 export default function Skills() {
-  const [selected, setSelected] = useState<Skill | null>(null);
+  const { colors, spacing, radius, typography } = useTheme();
+  const router = useRouter();
+  const liveSkills = useSkills();
+  const [tab, setTab] = useState<TabType>('installed');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const skills = liveSkills.data || [];
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    liveSkills.refresh();
+    setTimeout(() => setRefreshing(false), 600);
+  }, [liveSkills]);
+
+  const navigateToSkill = useCallback(
+    (skill: Skill) => {
+      router.push(`/skills/${skill.id}` as never);
+    },
+    [router]
+  );
+
+  const installedCount = skills.filter((s) => s.enabled !== false).length;
+  const disabledCount = skills.filter((s) => s.enabled === false).length;
 
   return (
-    <SafeAreaView style={s.safe}>
-      <ScrollView contentContainerStyle={s.scroll}>
-        <Text style={s.title}>Skills</Text>
-        <View style={s.countBadge}>
-          <Text style={s.countText}>{PLACEHOLDER_SKILLS.length} skills installed</Text>
-        </View>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+      <View style={{ paddingHorizontal: PAD, paddingTop: PAD }}>
+        <ScreenHeader title="Skills" />
 
-        <View style={s.grid}>
-          {PLACEHOLDER_SKILLS.map((skill, i) => (
-            <Animated.View key={skill.id} entering={FadeInUp.delay(i * 25).duration(300)}>
-              <Pressable style={s.tile} onPress={() => setSelected(skill)}>
-                <Ionicons name={skill.icon as any} size={26} color={C.accent} />
-                <Text style={s.tileName} numberOfLines={1}>{skill.name}</Text>
+        {/* Tab switcher */}
+        <View style={[styles.tabRow, { marginTop: -8, marginBottom: spacing.md }]}>
+          {(['installed', 'clawhub'] as const).map((t) => {
+            const isActive = tab === t;
+            return (
+              <Pressable
+                key={t}
+                onPress={() => setTab(t)}
+                style={[
+                  styles.tabBtn,
+                  {
+                    backgroundColor: isActive ? colors.accent + '22' : 'transparent',
+                    borderRadius: radius.md,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.sm,
+                    borderWidth: isActive ? 1 : 0,
+                    borderColor: colors.accent + '44',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={t === 'installed' ? 'apps' : 'cloud-download'}
+                  size={16}
+                  color={isActive ? colors.accent : colors.textMuted}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={{
+                    color: isActive ? colors.accent : colors.textMuted,
+                    fontSize: typography.body.fontSize,
+                    fontWeight: isActive ? '600' : '400',
+                  }}
+                >
+                  {t === 'installed' ? 'Installed' : 'ClawHub'}
+                </Text>
               </Pressable>
-            </Animated.View>
-          ))}
+            );
+          })}
         </View>
-      </ScrollView>
+      </View>
 
-      <Modal visible={!!selected} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
-        <Pressable style={s.overlay} onPress={() => setSelected(null)}>
-          <View style={s.modal}>
-            {selected && (
-              <>
-                <Ionicons name={selected.icon as any} size={40} color={C.accent} />
-                <Text style={s.modalTitle}>{selected.name}</Text>
-                <Text style={s.modalDesc}>{selected.description}</Text>
-                <View style={s.modalBadge}>
-                  <View style={[s.modalDot, { backgroundColor: '#10b981' }]} />
-                  <Text style={s.modalStatus}>Installed</Text>
-                </View>
-              </>
-            )}
+      {tab === 'installed' ? (
+        <ScrollView
+          contentContainerStyle={[styles.scroll, { padding: PAD, paddingTop: 0, paddingBottom: 40 }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.accent}
+            />
+          }
+        >
+          <View style={[styles.countBadge, { backgroundColor: colors.accent + '22', marginBottom: spacing.lg }]}>
+            <Text style={[styles.countText, { color: colors.accent }]}>
+              {skills.length} skills{disabledCount > 0 ? ` (${disabledCount} disabled)` : ''}
+            </Text>
           </View>
-        </Pressable>
-      </Modal>
+
+          {liveSkills.loading && !liveSkills.data ? (
+            <>
+              <SkeletonCard lines={4} />
+              <SkeletonCard lines={4} />
+            </>
+          ) : liveSkills.error && !liveSkills.data ? (
+            <ErrorState message={liveSkills.error} onRetry={liveSkills.refresh} />
+          ) : skills.length === 0 ? (
+            <EmptyState icon="extension-puzzle-outline" message="No skills installed" />
+          ) : (
+            <View style={[styles.grid, { gap: GAP }]}>
+              {skills.map((skill) => {
+                const disabled = skill.enabled === false;
+                const iconName =
+                  (skill.icon as keyof typeof Ionicons.glyphMap) ||
+                  ICONS[skill.name.toLowerCase().replace(/\s+/g, '_')] ||
+                  'extension-puzzle';
+
+                return (
+                  <Pressable
+                    key={skill.id}
+                    style={[
+                      styles.tile,
+                      {
+                        width: TILE,
+                        height: TILE,
+                        backgroundColor: colors.card,
+                        borderRadius: radius.lg,
+                        borderColor: disabled ? colors.border + '44' : colors.border,
+                        opacity: disabled ? 0.5 : 1,
+                      },
+                    ]}
+                    onPress={() => navigateToSkill(skill)}
+                  >
+                    <Ionicons
+                      name={iconName}
+                      size={26}
+                      color={disabled ? colors.textMuted : colors.accent}
+                    />
+                    <Text
+                      style={[
+                        styles.tileName,
+                        { color: disabled ? colors.textMuted : colors.textSecondary },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {skill.name}
+                    </Text>
+                    {disabled && (
+                      <View
+                        style={[
+                          styles.disabledBadge,
+                          {
+                            backgroundColor: colors.textMuted + '33',
+                            borderRadius: 4,
+                            paddingHorizontal: 4,
+                            paddingVertical: 1,
+                          },
+                        ]}
+                      >
+                        <Text style={{ color: colors.textMuted, fontSize: 9, fontWeight: '600' }}>
+                          OFF
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: PAD, paddingTop: 0, paddingBottom: 40 }}>
+          <ClawHubBrowser
+            onNavigateToSkill={navigateToSkill}
+            onInstalled={() => liveSkills.refresh()}
+          />
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  scroll: { padding: PAD, paddingBottom: 40 },
-  title: { fontSize: 28, fontWeight: '800', color: '#fff' },
-  countBadge: { backgroundColor: C.accent + '22', alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, marginTop: 8, marginBottom: 20 },
-  countText: { color: C.accent, fontSize: 13, fontWeight: '600' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
-  tile: {
-    width: TILE, height: TILE,
-    backgroundColor: C.card, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center', gap: 8,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  scroll: {},
+  tabRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  tileName: { color: '#ccc', fontSize: 11, fontWeight: '600', textAlign: 'center', paddingHorizontal: 4 },
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)' },
-  modal: { backgroundColor: C.surface, borderRadius: 20, padding: 28, alignItems: 'center', width: '80%' },
-  modalTitle: { color: '#fff', fontSize: 20, fontWeight: '800', marginTop: 12 },
-  modalDesc: { color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 },
-  modalBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 16 },
-  modalDot: { width: 8, height: 8, borderRadius: 4 },
-  modalStatus: { color: '#10b981', fontSize: 13, fontWeight: '600' },
+  tabBtn: { flexDirection: 'row', alignItems: 'center' },
+  countBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  countText: { fontSize: 13, fontWeight: '600' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  tile: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+  },
+  tileName: { fontSize: 11, fontWeight: '600', textAlign: 'center', paddingHorizontal: 4 },
+  disabledBadge: { position: 'absolute', top: 6, right: 6 },
 });

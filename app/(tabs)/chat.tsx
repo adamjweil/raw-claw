@@ -1,46 +1,76 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, FlatList, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
 import { useStore } from '../../src/services/store';
+import { useTheme } from '../../src/theme';
+import { EmptyState } from '../../src/components';
+import { MessageBubble } from '../../src/components/MessageBubble';
+import { SessionTabs } from '../../src/components/SessionTabs';
+import { ChatSearch } from '../../src/components/ChatSearch';
+import { CommandPalette, SlashCommand } from '../../src/components/CommandPalette';
+import { AttachmentPicker, PickedFile } from '../../src/components/AttachmentPicker';
+import { AttachmentPreview } from '../../src/components/AttachmentPreview';
+import { useChatSessions } from '../../src/hooks/useChatSessions';
+import { useVoiceInput } from '../../src/hooks/useVoiceInput';
+import { useTextToSpeech } from '../../src/hooks/useTextToSpeech';
 import { Message } from '../../src/types';
 
-const C = { bg: '#0a0a0f', surface: '#1a1a2e', card: '#16213e', accent: '#0ea5e9' };
+type MessageFilter = 'all' | 'alerts' | 'automated' | 'user';
 
-function formatTime(ts: number) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function renderContent(text: string) {
-  // Basic: bold **text**, code `text`
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**'))
-      return <Text key={i} style={{ fontWeight: '700' }}>{part.slice(2, -2)}</Text>;
-    if (part.startsWith('`') && part.endsWith('`'))
-      return <Text key={i} style={s.code}>{part.slice(1, -1)}</Text>;
-    return <Text key={i}>{part}</Text>;
-  });
-}
-
-function MessageBubble({ msg }: { msg: Message }) {
-  const isUser = msg.role === 'user';
-  return (
-    <Animated.View entering={FadeIn.duration(200)} style={[s.bubble, isUser ? s.bubbleUser : s.bubbleAssistant]}>
-      <Text style={[s.msgText, isUser && { color: '#fff' }]}>{renderContent(msg.content)}</Text>
-      <Text style={[s.time, isUser && { color: 'rgba(255,255,255,0.5)' }]}>{formatTime(msg.timestamp)}</Text>
-    </Animated.View>
-  );
-}
+const FILTER_OPTIONS: { key: MessageFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'alerts', label: 'Alerts' },
+  { key: 'automated', label: 'Automated' },
+  { key: 'user', label: 'User' },
+];
 
 export default function Chat() {
   const { state, dispatch } = useStore();
+  const { colors, spacing, radius, typography } = useTheme();
+  const router = useRouter();
+
+  // Chat input state
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList>(null);
 
+  // Feature states
+  const [showSearch, setShowSearch] = useState(false);
+  const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<PickedFile[]>([]);
+  const [activeFilter, setActiveFilter] = useState<MessageFilter>('all');
+
+  // Slash command detection
+  const showCommandPalette = input.startsWith('/');
+  const commandFilter = showCommandPalette ? input.slice(1) : '';
+
+  // Sessions hook
+  const {
+    sessions,
+    activeSessionId,
+    selectSession,
+    createSession,
+    renameSession,
+    deleteSession,
+  } = useChatSessions();
+
+  // Voice hooks
+  const { isRecording, startRecording, stopRecording } = useVoiceInput();
+  const { speakingMessageId, speak, stop: stopSpeech } = useTextToSpeech();
+
+  // Listen for incoming WebSocket messages
   useEffect(() => {
     if (state.client) {
       const unsub = state.client.onMessage((msg) => {
@@ -48,65 +78,396 @@ export default function Chat() {
       });
       return unsub;
     }
-  }, [state.client]);
+  }, [state.client, dispatch]);
 
+  // Filter messages based on active session and filter
+  const filteredMessages = useMemo(() => {
+    let msgs = state.messages;
+
+    // Filter by session if active
+    if (activeSessionId) {
+      msgs = msgs.filter(
+        (m) => !m.sessionId || m.sessionId === activeSessionId
+      );
+    }
+
+    // Filter by category
+    if (activeFilter !== 'all') {
+      msgs = msgs.filter((m) => {
+        const cat = m.category || (m.role === 'user' ? 'user' : 'assistant');
+        switch (activeFilter) {
+          case 'alerts':
+            return cat === 'alert';
+          case 'automated':
+            return cat === 'automation';
+          case 'user':
+            return cat === 'user';
+          default:
+            return true;
+        }
+      });
+    }
+
+    return msgs;
+  }, [state.messages, activeSessionId, activeFilter]);
+
+  // Send message
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text, timestamp: Date.now() };
-    dispatch({ type: 'ADD_MESSAGE', message: userMsg });
+    setAttachedFiles([]);
+
     setSending(true);
+    const now = Date.now();
+    const userMsg: Message = {
+      id: `user-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      role: 'user',
+      content: text,
+      timestamp: now,
+      category: 'user',
+      sessionId: activeSessionId || undefined,
+    };
+    dispatch({ type: 'ADD_MESSAGE', message: userMsg });
+    dispatch({ type: 'SET_THINKING', thinking: true });
+
     try {
       if (state.client) {
-        const reply = await state.client.sendMessage(text);
+        const reply = await state.client.sendMessage(text, activeSessionId || undefined);
         dispatch({ type: 'ADD_MESSAGE', message: reply });
       } else {
-        // Placeholder response
         const reply: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `reply-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'assistant',
           content: 'Connect to a gateway in **Settings** to start chatting.',
           timestamp: Date.now(),
         };
         dispatch({ type: 'ADD_MESSAGE', message: reply });
       }
-    } catch {
+    } catch (err: unknown) {
+      const errMsg =
+        err && typeof err === 'object' && 'message' in err
+          ? (err as { message: string }).message
+          : String(err);
+      console.warn('[Chat] sendMessage error:', errMsg, err);
       dispatch({
         type: 'ADD_MESSAGE',
-        message: { id: (Date.now() + 1).toString(), role: 'assistant', content: '⚠️ Failed to send message.', timestamp: Date.now() },
+        message: {
+          id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          role: 'assistant',
+          content: `⚠️ Failed to send message: ${errMsg}`,
+          timestamp: Date.now(),
+          category: 'alert',
+        },
       });
     } finally {
       setSending(false);
+      dispatch({ type: 'SET_THINKING', thinking: false });
     }
-  }, [input, sending, state.client]);
+  }, [input, sending, state.client, dispatch, activeSessionId]);
+
+  // Slash command handler
+  const handleCommandSelect = useCallback(
+    (cmd: SlashCommand) => {
+      setInput('');
+      if (cmd.command === '/clear') {
+        dispatch({ type: 'SET_MESSAGES', messages: [] });
+        return;
+      }
+      if (cmd.command === '/cron') {
+        router.push('/(tabs)/automations');
+        return;
+      }
+      if (cmd.command === '/skills') {
+        router.push('/(tabs)/skills');
+        return;
+      }
+      // For other commands, send as message
+      const text = cmd.command;
+      setInput(text);
+      // Auto-send after a tick
+      setTimeout(() => {
+        setInput('');
+        const cmdNow = Date.now();
+        const userMsg: Message = {
+          id: `cmd-${cmdNow}-${Math.random().toString(36).slice(2, 7)}`,
+          role: 'user',
+          content: text,
+          timestamp: cmdNow,
+          category: 'user',
+          sessionId: activeSessionId || undefined,
+        };
+        dispatch({ type: 'ADD_MESSAGE', message: userMsg });
+        if (state.client) {
+          dispatch({ type: 'SET_THINKING', thinking: true });
+          state.client
+            .sendMessage(text, activeSessionId || undefined)
+            .then((reply) => {
+              dispatch({ type: 'ADD_MESSAGE', message: reply });
+            })
+            .catch(() => {
+              dispatch({
+                type: 'ADD_MESSAGE',
+                message: {
+                  id: `cmd-err-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  role: 'assistant',
+                  content: '⚠️ Command failed.',
+                  timestamp: Date.now(),
+                  category: 'alert',
+                },
+              });
+            })
+            .finally(() => {
+              dispatch({ type: 'SET_THINKING', thinking: false });
+            });
+        }
+      }, 50);
+    },
+    [dispatch, state.client, activeSessionId, router]
+  );
+
+  // Voice recording handler
+  const handleVoicePress = useCallback(async () => {
+    if (isRecording) {
+      const uri = await stopRecording();
+      if (uri) {
+        // For now, add a placeholder noting the voice file
+        // In a real app, this would be sent to gateway for transcription
+        setInput((prev) => prev + '[Voice message recorded]');
+      }
+    } else {
+      await startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
+  // Speak handler
+  const handleSpeak = useCallback(
+    (text: string, messageId?: string) => {
+      if (messageId) {
+        speak(text, messageId);
+      }
+    },
+    [speak]
+  );
+
+  // Search result handler
+  const handleSearchResult = useCallback(
+    (_messageId: string) => {
+      setShowSearch(false);
+      // Could scroll to message in list
+    },
+    []
+  );
+
+  // Gateway search handler
+  const searchGateway = useCallback(
+    async (query: string) => {
+      if (!state.client) return [];
+      return state.client.searchMessages(query);
+    },
+    [state.client]
+  );
+
+  // Attachment handlers
+  const handleFilesPicked = useCallback((files: PickedFile[]) => {
+    setAttachedFiles((prev) => [...prev, ...files]);
+  }, []);
+
+  const handleRemoveAttachment = useCallback((index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Show search mode
+  if (showSearch) {
+    return (
+      <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top']}>
+        <ChatSearch
+          messages={state.messages}
+          onSearchGateway={searchGateway}
+          onSelectResult={handleSearchResult}
+          onClose={() => setShowSearch(false)}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <Text style={s.title}>Chat</Text>
-        <View style={[s.dot, state.connected ? s.dotOn : s.dotOff]} />
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top']}>
+      {/* Header */}
+      <View style={[styles.header, { padding: spacing.lg, paddingBottom: spacing.sm + 2 }]}>
+        <Text
+          style={[
+            styles.title,
+            {
+              color: colors.text,
+              fontSize: typography.title.fontSize,
+              fontWeight: typography.title.fontWeight,
+            },
+          ]}
+        >
+          Chat
+        </Text>
+        <View style={styles.headerRight}>
+          <Pressable onPress={() => setShowSearch(true)} hitSlop={8} style={{ marginRight: spacing.md }}>
+            <Ionicons name="search" size={22} color={colors.textSecondary} />
+          </Pressable>
+          <View
+            style={[
+              styles.dot,
+              { backgroundColor: state.connected ? colors.success : colors.error },
+            ]}
+          />
+        </View>
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
+
+      {/* Session tabs */}
+      {sessions.length > 0 && (
+        <SessionTabs
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSelectSession={selectSession}
+          onCreateSession={createSession}
+          onRenameSession={renameSession}
+          onDeleteSession={deleteSession}
+        />
+      )}
+
+      {/* Filter pills */}
+      <View style={[styles.filterRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}>
+        {FILTER_OPTIONS.map((opt) => {
+          const isActive = activeFilter === opt.key;
+          return (
+            <Pressable
+              key={opt.key}
+              onPress={() => setActiveFilter(opt.key)}
+              style={[
+                styles.filterPill,
+                {
+                  backgroundColor: isActive ? colors.accent + '22' : colors.surface,
+                  borderRadius: radius.full,
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.xs + 2,
+                  borderWidth: isActive ? 1 : 0,
+                  borderColor: colors.accent + '44',
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: isActive ? colors.accent : colors.textMuted,
+                  fontSize: typography.small.fontSize,
+                  fontWeight: isActive ? '600' : '400',
+                }}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={90}
+      >
+        {/* Message list */}
         <FlatList
           ref={listRef}
-          data={state.messages}
+          data={filteredMessages}
           inverted
-          keyExtractor={(m) => m.id}
-          renderItem={({ item }) => <MessageBubble msg={item} />}
-          contentContainerStyle={s.list}
+          keyExtractor={(m, index) => m.id ?? `msg-${index}`}
+          renderItem={({ item }) => (
+            <MessageBubble
+              msg={item}
+              onSpeak={(text) => handleSpeak(text, item.id)}
+              isSpeaking={speakingMessageId === item.id}
+            />
+          )}
+          contentContainerStyle={[styles.list, { padding: spacing.md, paddingBottom: spacing.sm }]}
           ListEmptyComponent={
-            <View style={s.empty}>
-              <Ionicons name="chatbubble-ellipses-outline" size={48} color="#333" />
-              <Text style={s.emptyText}>Send a message to get started</Text>
+            <View style={styles.emptyWrap}>
+              <EmptyState
+                icon="chatbubble-ellipses-outline"
+                message="Send a message to get started"
+              />
             </View>
           }
         />
-        <View style={s.inputBar}>
+
+        {/* Thinking indicator */}
+        {state.thinking && (
+          <View style={[styles.thinkingBar, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}>
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontSize: typography.small.fontSize,
+                marginLeft: spacing.sm,
+              }}
+            >
+              Thinking…
+            </Text>
+          </View>
+        )}
+
+        {/* Command palette */}
+        {showCommandPalette && (
+          <CommandPalette filter={commandFilter} onSelect={handleCommandSelect} />
+        )}
+
+        {/* Attachment picker */}
+        {showAttachmentPicker && (
+          <AttachmentPicker
+            onFilesPicked={handleFilesPicked}
+            onClose={() => setShowAttachmentPicker(false)}
+          />
+        )}
+
+        {/* Attachment previews */}
+        {attachedFiles.length > 0 && (
+          <AttachmentPreview files={attachedFiles} onRemove={handleRemoveAttachment} />
+        )}
+
+        {/* Input bar */}
+        <View
+          style={[
+            styles.inputBar,
+            {
+              backgroundColor: colors.surface,
+              padding: spacing.md - 4,
+              paddingBottom: spacing.md,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          {/* Attachment button */}
+          <Pressable
+            onPress={() => setShowAttachmentPicker(!showAttachmentPicker)}
+            hitSlop={8}
+            style={{ marginRight: spacing.sm }}
+          >
+            <Ionicons
+              name="attach"
+              size={24}
+              color={showAttachmentPicker ? colors.accent : colors.textMuted}
+            />
+          </Pressable>
+
           <TextInput
-            style={s.input}
+            style={[
+              styles.input,
+              {
+                backgroundColor: colors.card,
+                color: colors.text,
+                borderRadius: radius.xl,
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.md - 4,
+                fontSize: typography.body.fontSize,
+              },
+            ]}
             placeholder="Message your AI…"
-            placeholderTextColor="#555"
+            placeholderTextColor={colors.textMuted}
             value={input}
             onChangeText={setInput}
             onSubmitEditing={send}
@@ -114,32 +475,77 @@ export default function Chat() {
             multiline
             maxLength={4000}
           />
-          <Pressable onPress={send} style={[s.sendBtn, (!input.trim() || sending) && { opacity: 0.3 }]} disabled={!input.trim() || sending}>
-            <Ionicons name="send" size={20} color="#fff" />
-          </Pressable>
+
+          {/* Voice / Send button */}
+          {input.trim() ? (
+            <Pressable
+              onPress={send}
+              style={[
+                styles.sendBtn,
+                {
+                  backgroundColor: colors.accent,
+                  marginLeft: spacing.sm,
+                },
+                sending && { opacity: 0.3 },
+              ]}
+              disabled={sending}
+            >
+              <Ionicons name="send" size={20} color="#fff" />
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={handleVoicePress}
+              style={[
+                styles.sendBtn,
+                {
+                  backgroundColor: isRecording ? colors.error : colors.card,
+                  marginLeft: spacing.sm,
+                },
+              ]}
+            >
+              <Ionicons
+                name={isRecording ? 'stop' : 'mic'}
+                size={20}
+                color={isRecording ? '#fff' : colors.textMuted}
+              />
+            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, paddingBottom: 10 },
-  title: { fontSize: 28, fontWeight: '800', color: '#fff' },
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
+  title: {},
   dot: { width: 10, height: 10, borderRadius: 5 },
-  dotOn: { backgroundColor: '#10b981' },
-  dotOff: { backgroundColor: '#ef4444' },
-  list: { padding: 16, paddingBottom: 8 },
-  bubble: { maxWidth: '80%', padding: 14, borderRadius: 18, marginBottom: 10 },
-  bubbleUser: { backgroundColor: C.accent, alignSelf: 'flex-end', borderBottomRightRadius: 4 },
-  bubbleAssistant: { backgroundColor: C.card, alignSelf: 'flex-start', borderBottomLeftRadius: 4 },
-  msgText: { color: '#ddd', fontSize: 15, lineHeight: 22 },
-  code: { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', backgroundColor: 'rgba(0,0,0,0.3)', paddingHorizontal: 4, borderRadius: 3, fontSize: 13 },
-  time: { color: '#666', fontSize: 11, marginTop: 6, alignSelf: 'flex-end' },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 120, transform: [{ scaleY: -1 }] },
-  emptyText: { color: '#444', marginTop: 12, fontSize: 15 },
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, paddingBottom: 16, backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' },
-  input: { flex: 1, backgroundColor: C.card, color: '#fff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, maxHeight: 100 },
-  sendBtn: { backgroundColor: C.accent, width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  filterRow: { flexDirection: 'row', gap: 8 },
+  filterPill: {},
+  list: {},
+  emptyWrap: {
+    flex: 1,
+    paddingTop: 120,
+    transform: [{ scaleY: -1 }],
+  },
+  thinkingBar: { flexDirection: 'row', alignItems: 'center' },
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderTopWidth: 1,
+  },
+  input: { flex: 1, maxHeight: 100 },
+  sendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
