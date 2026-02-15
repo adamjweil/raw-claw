@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RawClaw — Support</title>
+  <meta name="description" content="Support and setup guide for RawClaw, the mobile companion for your OpenClaw AI agent." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────── -->
+  <header>
+    <nav>
+      <a href="index.html" class="logo"><img src="Claw_logo.jpg" alt="RawClaw" class="logo-img" /> Raw<span>Claw</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="active">Support</a></li>
+        <li><a href="privacy.html">Privacy Policy</a></li>
+        <li><a href="https://github.com/nichochar/openclaw" target="_blank" rel="noopener">OpenClaw ↗</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- ── Hero ────────────────────────────────────────────────── -->
+  <div class="hero">
+    <h1>Raw<span>Claw</span> Support</h1>
+    <p>Everything you need to get RawClaw connected to your OpenClaw AI agent and running smoothly.</p>
+  </div>
+
+  <main class="container">
+
+    <!-- ── What is RawClaw / OpenClaw ─────────────────────────── -->
+    <section id="about">
+      <h2>What are OpenClaw &amp; RawClaw?</h2>
+
+      <div class="card-grid">
+        <div class="card">
+          <div class="icon">🧠</div>
+          <h3>OpenClaw</h3>
+          <p>An open-source personal AI agent framework that runs on your Mac or server. It's the brain — handling chat, automations, skills, and memory.</p>
+        </div>
+        <div class="card">
+          <div class="icon">📱</div>
+          <h3>RawClaw</h3>
+          <p>The companion iOS app that gives you a full mobile dashboard for your OpenClaw agent — chat, automations, memory, skills, and status — from anywhere.</p>
+        </div>
+      </div>
+
+      <p style="margin-top: 24px;">
+        RawClaw connects <strong>directly</strong> to your OpenClaw gateway over WebSocket. There is no intermediary cloud server — your data stays between your devices.
+      </p>
+    </section>
+
+    <!-- ── Prerequisites ──────────────────────────────────────── -->
+    <section id="prerequisites">
+      <h2>Prerequisites</h2>
+      <ol class="steps">
+        <li>
+          <strong>A running OpenClaw gateway</strong><br />
+          Follow the <a href="https://github.com/nichochar/openclaw" target="_blank" rel="noopener">OpenClaw setup guide</a> to get your AI agent running on your Mac or server.
+        </li>
+        <li>
+          <strong>RawClaw installed on your iPhone</strong><br />
+          Download RawClaw from the App Store (coming soon) or build from <a href="https://github.com/adamjweil/RawClaw" target="_blank" rel="noopener">source</a>.
+        </li>
+        <li>
+          <strong>Network connectivity</strong><br />
+          Both devices need to be reachable — either on the same Wi-Fi or connected via <a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> for remote access.
+        </li>
+      </ol>
+    </section>
+
+    <!-- ── Connecting ─────────────────────────────────────────── -->
+    <section id="connect">
+      <h2>Connecting RawClaw to OpenClaw</h2>
+
+      <ol class="steps">
+        <li>
+          <strong>Open RawClaw</strong> and tap the <strong>status pill</strong> in the top-right of the Home screen, or go to <strong>Settings</strong>.
+        </li>
+        <li>
+          Enter your <strong>Gateway URL</strong> — this is the address where your OpenClaw instance is running (e.g. <code>http://192.168.1.42:3000</code> for local, or <code>http://100.x.x.x:3000</code> for Tailscale).
+        </li>
+        <li>
+          Enter your <strong>Gateway Token</strong> — the authentication token from your OpenClaw configuration.
+        </li>
+        <li>
+          Tap <strong>Test</strong> to verify the connection, then <strong>Save</strong>.
+        </li>
+      </ol>
+
+      <div class="callout">
+        <strong>Tip:</strong> Once saved, RawClaw will automatically connect via WebSocket and start pulling live data from your agent.
+      </div>
+
+      <!-- Connection Options -->
+      <h3>🏠 Option A — Same Wi-Fi (Local Network)</h3>
+      <p>If your phone and the machine running OpenClaw are on the same network, use your Mac's local IP address:</p>
+      <pre><code>http://192.168.x.x:3000</code></pre>
+      <p>Find your Mac's IP: <strong>System Settings → Wi-Fi → Details → IP Address</strong></p>
+
+      <h3>🌐 Option B — Tailscale (Recommended for Remote Access)</h3>
+      <p><a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> creates a secure, encrypted mesh network between your devices — no port forwarding needed, works from anywhere.</p>
+      <ol>
+        <li>Install Tailscale on your Mac: <code>brew install tailscale</code> or download from <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com</a></li>
+        <li>Install <a href="https://apps.apple.com/app/tailscale/id1470499037" target="_blank" rel="noopener">Tailscale on your iPhone</a> from the App Store</li>
+        <li>Sign in to the same Tailscale account on both devices</li>
+        <li>Use your Mac's Tailscale IP as the Gateway URL:</li>
+      </ol>
+      <pre><code>http://100.x.x.x:3000
+# or use MagicDNS:
+http://your-mac-name:3000</code></pre>
+
+      <div class="callout">
+        <strong>Security note:</strong> Tailscale handles encryption and NAT traversal automatically. Your gateway is never exposed to the public internet.
+      </div>
+    </section>
+
+    <!-- ── Features ───────────────────────────────────────────── -->
+    <section id="features">
+      <h2>What Can You Do with RawClaw?</h2>
+      <div class="card-grid">
+        <div class="card">
+          <div class="icon">💬</div>
+          <h3>Chat</h3>
+          <p>Real-time messaging with markdown rendering, tool-call transparency, voice input, and file attachments.</p>
+        </div>
+        <div class="card">
+          <div class="icon">📊</div>
+          <h3>Dashboard</h3>
+          <p>Monitor gateway health, token usage, active automations, and connected devices at a glance.</p>
+        </div>
+        <div class="card">
+          <div class="icon">⚡</div>
+          <h3>Automations</h3>
+          <p>View, create, toggle, and trigger cron jobs on demand with full run history.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🧠</div>
+          <h3>Memory</h3>
+          <p>Browse and edit your AI's context files — SOUL.md, MEMORY.md, USER.md, and more.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🧩</div>
+          <h3>Skills</h3>
+          <p>Discover installed capabilities and browse the ClawHub skill registry.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🔔</div>
+          <h3>Notifications</h3>
+          <p>Category-based push notifications with deep-linking and quiet hours.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Troubleshooting ────────────────────────────────────── -->
+    <section id="troubleshooting">
+      <h2>Troubleshooting</h2>
+
+      <h3>Can't connect to the gateway?</h3>
+      <ul>
+        <li>Make sure your OpenClaw gateway is running and accessible from your network.</li>
+        <li>Double-check the Gateway URL — include the port number (default is <code>3000</code>).</li>
+        <li>Verify the Gateway Token matches your OpenClaw config.</li>
+        <li>If using Tailscale, confirm both devices are signed in and showing as connected.</li>
+        <li>Try accessing the gateway URL in your phone's browser to rule out network issues.</li>
+      </ul>
+
+      <h3>App crashes or unexpected behavior?</h3>
+      <ul>
+        <li>Make sure you're running the latest version of RawClaw.</li>
+        <li>Try force-quitting the app and relaunching.</li>
+        <li>Check that your OpenClaw gateway is up to date.</li>
+      </ul>
+
+      <h3>Need more help?</h3>
+      <p>Open an issue on the <a href="https://github.com/adamjweil/RawClaw/issues" target="_blank" rel="noopener">RawClaw GitHub repo</a> or the <a href="https://github.com/nichochar/openclaw/issues" target="_blank" rel="noopener">OpenClaw GitHub repo</a>.</p>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ──────────────────────────────────────────────── -->
+  <footer>
+    <div class="footer-links">
+      <a href="index.html">Support</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="https://github.com/adamjweil/RawClaw" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <p>&copy; 2025 RawClaw. All rights reserved.</p>
+  </footer>
+
+</body>
+</html>
+
