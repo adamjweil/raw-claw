@@ -4,26 +4,30 @@ import { useTheme } from '../theme';
 
 interface ScreenHeaderProps {
   title: string;
+  leftElement?: React.ReactNode;
   rightElement?: React.ReactNode;
 }
 
-export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ title, rightElement }) => {
+export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ title, leftElement, rightElement }) => {
   const { colors, spacing, typography } = useTheme();
 
   return (
     <View style={[styles.container, { marginBottom: spacing.xl }]}>
-      <Text
-        style={[
-          styles.title,
-          {
-            color: colors.text,
-            fontSize: typography.title.fontSize,
-            fontWeight: typography.title.fontWeight,
-          },
-        ]}
-      >
-        {title}
-      </Text>
+      <View style={styles.titleRow}>
+        <Text
+          style={[
+            styles.title,
+            {
+              color: colors.text,
+              fontSize: typography.title.fontSize,
+              fontWeight: typography.title.fontWeight,
+            },
+          ]}
+        >
+          {title}
+        </Text>
+        {leftElement}
+      </View>
       {rightElement && <View>{rightElement}</View>}
     </View>
   );
@@ -36,5 +40,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {},
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
 });
 
