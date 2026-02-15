@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, RefreshControl, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, RefreshControl, Alert, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -297,6 +297,14 @@ export default function Home() {
         {/* Header */}
         <ScreenHeader
           title="RawClaw"
+          leftElement={
+            <Image
+              source={require('../../assets/claw_icon.png')}
+              style={styles.logo}
+              resizeMode="contain"
+              accessibilityLabel="RawClaw logo"
+            />
+          }
           rightElement={
             <StatusPill
               state={pillState}
@@ -739,6 +747,10 @@ export default function Home() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: {},
+  logo: {
+    width: 32,
+    height: 32,
+  },
   editLabel: {
     textTransform: 'uppercase',
     letterSpacing: 1,
