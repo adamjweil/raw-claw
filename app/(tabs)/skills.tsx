@@ -216,7 +216,7 @@ export default function Skills() {
   const disabledCount = skills.filter((s) => s.enabled === false).length;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
       <View style={{ paddingHorizontal: PAD, paddingTop: PAD }}>
         <ScreenHeader title="Skills" />
 

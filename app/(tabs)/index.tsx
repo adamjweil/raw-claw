@@ -11,9 +11,10 @@ import { ActivityItem } from '../../src/components/ActivityItem';
 import { OfflineBanner } from '../../src/components/OfflineBanner';
 import { NotificationSummary } from '../../src/components/NotificationSummary';
 import { UsageChart } from '../../src/components/UsageChart';
-import { useGatewayStatus, useActivityFeed, useCronJobs, useTokenUsage, usePairedNodes } from '../../src/hooks';
+import { useGatewayStatus, useActivityFeed, useCronJobs, useTokenUsage, usePairedNodes, useIdentityName } from '../../src/hooks';
 import { GatewayClient } from '../../src/services/gateway';
 import { CronJob, ActivityEvent } from '../../src/types';
+import { getContextWindowLabel } from '../../src/utils/modelContext';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -90,6 +91,9 @@ export default function Home() {
   const pairedNodesHook = usePairedNodes();
 
   const connected = state.connected;
+
+  // Identity name from IDENTITY.md memory file
+  const identityName = useIdentityName();
 
   // Model picker state
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -248,11 +252,13 @@ export default function Home() {
   // Model name from live status or store
   const modelName = gatewayStatus.data?.model || state.status?.model || '';
 
-  // Status pill label
+  // Status pill label — show identity name next to status when connected
   const pillLabel = useMemo(() => {
-    if (pillState === 'online') return 'Online';
+    if (pillState === 'online') {
+      return identityName ? `${identityName} · Online` : 'Online';
+    }
     return undefined; // use default from StatusPill
-  }, [pillState, modelName]);
+  }, [pillState, identityName]);
 
   // Active automation count
   const enabledJobs = cronJobs.data?.filter((j) => j.enabled).length ?? 0;
@@ -278,7 +284,7 @@ export default function Home() {
   const pairedNodes = pairedNodesHook.nodes;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
       <ScrollView
         contentContainerStyle={[styles.scroll, { padding: spacing.lg, paddingBottom: 40 }]}
         refreshControl={
@@ -503,7 +509,7 @@ export default function Home() {
                   : '—'
               }
             />
-            <Row label="Context" value="—" />
+            <Row label="Context" value={getContextWindowLabel(modelName)} />
           </AnimatedCard>
         )}
         <ModelPicker

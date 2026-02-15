@@ -20,6 +20,7 @@ import { UsageChart } from '../../src/components/UsageChart';
 import { useGatewayStatus, useChannels, useTokenUsage } from '../../src/hooks';
 import { GatewayClient } from '../../src/services/gateway';
 import { PairedNode, Channel } from '../../src/types';
+import { getContextWindowLabel } from '../../src/utils/modelContext';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ export default function Status() {
       lastSeen: new Date().toISOString(),
     });
 
-    // 2. This device (the phone / tablet running PAW)
+    // 2. This device (the phone / tablet running RawClaw)
     const platformName =
       Platform.OS === 'ios'
         ? 'iPhone'
@@ -201,7 +202,7 @@ export default function Status() {
         : Platform.OS;
     nodes.push({
       id: '_this_device',
-      name: 'PAW Mobile',
+      name: 'RawClaw Mobile',
       type: platformName,
       status: 'online',
       lastSeen: new Date().toISOString(),
@@ -291,7 +292,7 @@ export default function Status() {
   }
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
       <ScrollView
         contentContainerStyle={[styles.scroll, { padding: spacing.lg, paddingBottom: 40 }]}
         refreshControl={
@@ -495,7 +496,7 @@ export default function Status() {
                 : '—'
             }
           />
-          <Row label="Context" value={statusData?.model ? '—' : '—'} />
+          <Row label="Context" value={getContextWindowLabel(statusData?.model)} />
         </AnimatedCard>
         <ModelPicker
           visible={showModelPicker}

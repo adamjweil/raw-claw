@@ -14,12 +14,18 @@ export default function TabLayout() {
           backgroundColor: colors.bg,
           borderTopColor: colors.surface,
           borderTopWidth: 1,
-          paddingBottom: 4,
           height: 88,
+          paddingTop: 8,
+          paddingBottom: 24,
         },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarIconStyle: { marginBottom: 2 },
+        tabBarItemStyle: {
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
       }}
       screenListeners={{
         tabPress: () => {
@@ -36,6 +42,16 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="memory"
+        options={{
+          title: 'Memory',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="book" size={size} color={color} />
+          ),
+          tabBarAccessibilityLabel: 'Memory browser tab',
+        }}
+      />
+      <Tabs.Screen
         name="chat"
         options={{
           title: 'Chat',
@@ -44,16 +60,6 @@ export default function TabLayout() {
           ),
           tabBarAccessibilityLabel: 'Chat tab',
           tabBarHideOnKeyboard: true,
-        }}
-      />
-      <Tabs.Screen
-        name="memory"
-        options={{
-          title: 'Memory',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="book" size={size} color={color} />
-          ),
-          tabBarAccessibilityLabel: 'Memory browser tab',
         }}
       />
       <Tabs.Screen
@@ -78,6 +84,7 @@ export default function TabLayout() {
         name="status"
         options={{
           title: 'Status',
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="pulse" size={size} color={color} />,
           tabBarAccessibilityLabel: 'Status tab',
         }}
