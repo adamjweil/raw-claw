@@ -584,24 +584,45 @@ export class GatewayClient {
       this.rpc<Record<string, unknown>>('health', {}).catch(() => null),
     ]);
 
+    // Extract model from nested sessions.defaults.model
+    const sessions = status.sessions as Record<string, unknown> | undefined;
+    const defaults = sessions?.defaults as Record<string, unknown> | undefined;
+    const recentSessions = (sessions?.recent as Array<Record<string, unknown>>) || [];
+    const firstRecent = recentSessions[0];
+
+    const model =
+      typeof status.model === 'string'
+        ? status.model
+        : typeof status.defaultModel === 'string'
+        ? status.defaultModel
+        : defaults && typeof defaults.model === 'string'
+        ? defaults.model
+        : 'unknown';
+
+    // Extract session ID from the most recent session
+    const sessionId =
+      firstRecent && typeof firstRecent.sessionId === 'string'
+        ? firstRecent.sessionId
+        : null;
+
+    // Uptime: check top-level first, then fall back
+    const uptime =
+      typeof status.uptime === 'string'
+        ? status.uptime
+        : typeof status.uptimeMs === 'number'
+        ? `${Math.floor((status.uptimeMs as number) / 1000 / 60)}m`
+        : undefined;
+
+    const version =
+      typeof status.version === 'string' ? status.version : undefined;
+
     return {
       connected: true,
-      model:
-        typeof status.model === 'string'
-          ? status.model
-          : typeof status.defaultModel === 'string'
-          ? status.defaultModel
-          : 'unknown',
-      uptime:
-        typeof status.uptime === 'string'
-          ? status.uptime
-          : typeof status.uptimeMs === 'number'
-          ? `${Math.floor(status.uptimeMs / 1000 / 60)}m`
-          : 'unknown',
-      version:
-        typeof status.version === 'string' ? status.version : 'unknown',
+      model,
+      uptime: uptime || '—',
+      version: version || '—',
       channels: [],
-      sessionId: null,
+      sessionId,
     };
   }
 
@@ -715,7 +736,7 @@ export class GatewayClient {
       id: String(s.id ?? s.name ?? ''),
       name: String(s.name ?? ''),
       description: String(s.description ?? ''),
-      icon: String(s.icon ?? '🔧'),
+      icon: String(s.icon ?? ''),
       enabled: s.enabled !== false,
       version: typeof s.version === 'string' ? s.version : undefined,
     }));

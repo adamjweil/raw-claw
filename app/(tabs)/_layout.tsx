@@ -43,6 +43,7 @@ export default function TabLayout() {
             <Ionicons name="chatbubbles" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Chat tab',
+          tabBarHideOnKeyboard: true,
         }}
       />
       <Tabs.Screen
