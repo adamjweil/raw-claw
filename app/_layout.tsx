@@ -1,29 +1,49 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StoreProvider } from '../src/services/store';
+import { ThemeProvider, useTheme } from '../src/theme';
+import { ErrorBoundary } from '../src/components/ErrorBoundary';
+import { NotificationManager } from '../src/services/notifications';
 
-export default function RootLayout() {
+function InnerLayout() {
+  const { colors, isDark } = useTheme();
+
   return (
-    <StoreProvider>
-      <StatusBar style="light" />
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <NotificationManager />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0a0a0f' },
+          contentStyle: { backgroundColor: colors.bg },
+          animation: 'slide_from_right',
         }}
       >
-        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
         <Stack.Screen
           name="settings"
           options={{
             headerShown: true,
             title: 'Settings',
-            headerStyle: { backgroundColor: '#1a1a2e' },
-            headerTintColor: '#fff',
+            headerStyle: { backgroundColor: colors.surface },
+            headerTintColor: isDark ? '#fff' : colors.text,
             presentation: 'modal',
+            animation: 'slide_from_bottom',
           }}
         />
       </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <StoreProvider>
+      <ThemeProvider>
+        <ErrorBoundary>
+          <InnerLayout />
+        </ErrorBoundary>
+      </ThemeProvider>
     </StoreProvider>
   );
 }
