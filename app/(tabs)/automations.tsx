@@ -103,7 +103,7 @@ export default function Automations() {
   const enabledCount = jobs.filter((j) => getEnabled(j)).length;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
       <ScrollView
         contentContainerStyle={[styles.scroll, { padding: spacing.lg, paddingBottom: 100 }]}
         refreshControl={

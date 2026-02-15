@@ -42,7 +42,7 @@ export function usePairedNodes() {
       lastSeen: new Date().toISOString(),
     });
 
-    // 2. This device (the phone / tablet running PAW)
+    // 2. This device (the phone / tablet running RawClaw)
     const platformName =
       Platform.OS === 'ios'
         ? 'iPhone'
@@ -51,7 +51,7 @@ export function usePairedNodes() {
         : Platform.OS;
     result.push({
       id: '_this_device',
-      name: 'PAW Mobile',
+      name: 'RawClaw Mobile',
       type: platformName,
       status: 'online',
       lastSeen: new Date().toISOString(),

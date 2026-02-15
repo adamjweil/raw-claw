@@ -141,6 +141,45 @@ function normalizeMessage(
   return msg;
 }
 
+// ─── Session title humanizer ──────────────────────────────────────────
+
+/**
+ * Convert internal session keys (e.g. "agent:main:main", "agent:main:cron:cbeb076b...")
+ * into user-friendly display labels.
+ *
+ * Known patterns:
+ *   agent:<name>:main        → "Main Chat"
+ *   agent:<name>:cron:<id>   → "Automation Run"
+ *   agent:<name>:<other>     → title-cased <other>
+ *
+ * If the key doesn't match any internal pattern it's returned as-is
+ * (it's likely already a human-readable title).
+ */
+function formatSessionTitle(key: string): string {
+  // Only transform keys that look like internal colon-separated identifiers
+  const parts = key.split(':');
+  if (parts.length < 3 || parts[0] !== 'agent') return key;
+
+  const segment = parts[2]; // "main", "cron", etc.
+
+  if (segment === 'main') {
+    return 'Main Chat';
+  }
+
+  if (segment === 'cron') {
+    // Shorten the UUID suffix if present for a cleaner look
+    const cronId = parts[3] ?? '';
+    const shortId = cronId.length > 8 ? cronId.slice(0, 8) : cronId;
+    return shortId ? `Automation Run · ${shortId}` : 'Automation Run';
+  }
+
+  // Fallback: title-case the segment name
+  const label = segment
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return label;
+}
+
 // ─── GatewayClient ────────────────────────────────────────────────────
 
 const RPC_TIMEOUT_MS = 30_000;
@@ -577,13 +616,15 @@ export class GatewayClient {
       // stale sessions to always appear as "just now" on every poll.
       const bestTimestamp = updatedAt ?? createdAt ?? null;
 
+      const rawKey = typeof s.key === 'string' ? s.key : typeof s.id === 'string' ? s.id : '';
+
       return {
-        id: typeof s.key === 'string' ? s.key : typeof s.id === 'string' ? s.id : uuid(),
+        id: rawKey || uuid(),
         title:
           typeof s.title === 'string'
             ? s.title
-            : typeof s.key === 'string'
-            ? s.key
+            : rawKey
+            ? formatSessionTitle(rawKey)
             : 'Session',
         createdAt: createdAt ?? bestTimestamp ?? new Date(0).toISOString(),
         updatedAt: bestTimestamp ?? new Date(0).toISOString(),
@@ -592,7 +633,13 @@ export class GatewayClient {
             ? s.messageCount
             : typeof s.message_count === 'number'
             ? s.message_count
-            : 0,
+            : typeof s.messages === 'number'
+            ? s.messages
+            : typeof s.numMessages === 'number'
+            ? s.numMessages
+            : typeof s.count === 'number'
+            ? s.count
+            : -1, // -1 signals "unknown" — the API didn't provide a count
       };
     });
   }
@@ -1464,9 +1511,14 @@ export class GatewayClient {
     try {
       const sessions = await this.getChatSessions();
       for (const s of sessions.slice(0, 10)) {
+        // Only show message count when the API actually provided one (> 0)
+        const suffix =
+          s.messageCount > 0
+            ? ` · ${s.messageCount} ${s.messageCount === 1 ? 'message' : 'messages'}`
+            : '';
         events.push({
           id: `chat-${s.id}`,
-          text: `Chat session "${s.title}" (${s.messageCount} messages)`,
+          text: `${s.title}${suffix}`,
           category: 'chat',
           timestamp: s.updatedAt,
           icon: 'chatbubble',
@@ -1482,10 +1534,15 @@ export class GatewayClient {
       const jobs = await this.getCronJobs();
       for (const job of jobs) {
         if (job.lastRun) {
-          const statusEmoji = job.lastStatus === 'success' ? '✓' : job.lastStatus === 'error' ? '✗' : '…';
+          const statusLabel =
+            job.lastStatus === 'success'
+              ? 'ok'
+              : job.lastStatus === 'error'
+              ? 'failed'
+              : job.lastStatus ?? 'ran';
           events.push({
             id: `cron-${job.id}`,
-            text: `Cron "${job.name}" ${statusEmoji} ${job.lastStatus ?? 'ran'}`,
+            text: `Cron "${job.name}" … ${statusLabel}`,
             category: 'cron',
             timestamp: job.lastRun,
             icon: 'timer',

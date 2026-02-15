@@ -28,8 +28,23 @@ With RawClaw you can:
 
 ## Screenshots
 
-<!-- TODO: Add screenshots -->
-*Screenshots coming soon.*
+<p align="center">
+  <img src="assets/screenshots/RawClaw_Home_Top.PNG" alt="Home Dashboard (Top)" width="230" />
+  <img src="assets/screenshots/RawClaw_Home_Bottom.PNG" alt="Home Dashboard (Bottom)" width="230" />
+  <img src="assets/screenshots/RawClaw_Chat.PNG" alt="Chat" width="230" />
+</p>
+<p align="center">
+  <em>Home Dashboard (top) · Home Dashboard (bottom) · Chat</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/RawClaw_Memory.PNG" alt="Memory Browser" width="230" />
+  <img src="assets/screenshots/RawClaw_Automations.PNG" alt="Automations" width="230" />
+  <img src="assets/screenshots/RawClaw_Skills.PNG" alt="Skills" width="230" />
+</p>
+<p align="center">
+  <em>Memory Browser · Automations · Skills</em>
+</p>
 
 ---
 
