@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useStore } from '../services/store';
 import { CronRunRecord } from '../types';
+import { getLocalRunHistory, mergeRunHistory } from '../services/runHistoryStore';
 
 interface UseCronRunHistoryResult {
   data: CronRunRecord[] | null;
@@ -25,13 +26,30 @@ export function useCronRunHistory(jobId: string): UseCronRunHistoryResult {
     setLoading(true);
     setError(null);
     try {
-      const result = await state.client.getCronRunHistory(jobId);
+      // Fetch whatever the gateway returns (may be empty or partial)
+      const gatewayRuns = await state.client.getCronRunHistory(jobId);
+
+      // Merge gateway runs with locally persisted history
+      const merged = await mergeRunHistory(jobId, gatewayRuns);
+
       if (mountedRef.current) {
-        setData(result);
+        setData(merged);
         setLoading(false);
       }
     } catch (e: unknown) {
       if (mountedRef.current) {
+        // Even if the gateway call fails, try to show local history
+        try {
+          const localRuns = await getLocalRunHistory(jobId);
+          if (localRuns.length > 0) {
+            setData(localRuns);
+            setLoading(false);
+            return;
+          }
+        } catch {
+          // ignore local read failure
+        }
+
         const message =
           e instanceof Error
             ? e.message
@@ -54,4 +72,3 @@ export function useCronRunHistory(jobId: string): UseCronRunHistoryResult {
 
   return { data, loading, error, refresh: fetch };
 }
-

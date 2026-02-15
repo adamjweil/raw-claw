@@ -19,7 +19,7 @@ export function useMemoryFiles(): UseMemoryFilesResult {
   const { state } = useStore();
 
   const fetcher = useCallback(async () => {
-    if (!state.client) return [];
+    if (!state.client) throw new Error('No gateway client');
     return state.client.getMemoryFiles();
   }, [state.client]);
 

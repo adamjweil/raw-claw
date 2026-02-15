@@ -1,4 +1,4 @@
-# Paw 🐾
+# RawClaw 🐾
 
 A premium React Native (Expo) mobile app — your personal AI companion interface for [OpenClaw](https://github.com/openclaw).
 

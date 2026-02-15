@@ -192,10 +192,32 @@ export const ClawHubBrowser: React.FC<ClawHubBrowserProps> = ({
               color: colors.textMuted,
               marginTop: spacing.sm,
               fontSize: typography.body.fontSize,
+              textAlign: 'center',
             }}
           >
-            {query ? 'No skills found' : 'Browse the ClawHub catalog'}
+            {query
+              ? `No skills found for "${query}"`
+              : 'No skills available in ClawHub yet'}
           </Text>
+          <Text
+            style={{
+              color: colors.textMuted + '99',
+              marginTop: spacing.xs,
+              fontSize: typography.small.fontSize,
+              textAlign: 'center',
+              paddingHorizontal: 32,
+            }}
+          >
+            {query
+              ? 'Try a different search term or category'
+              : 'Check back later or install skills via the CLI using\nclawhub search & clawhub install'}
+          </Text>
+          <Pressable
+            onPress={handleSearch}
+            style={{ marginTop: spacing.md }}
+          >
+            <Text style={{ color: colors.accent, fontWeight: '600' }}>Refresh</Text>
+          </Pressable>
         </View>
       ) : (
         <View style={[styles.grid, { gap: GAP }]}>
@@ -213,7 +235,7 @@ export const ClawHubBrowser: React.FC<ClawHubBrowserProps> = ({
                   opacity: installing === skill.id ? 0.5 : 1,
                 },
               ]}
-              onPress={() => onNavigateToSkill(skill)}
+              onPress={() => handleInstall(skill)}
             >
               {installing === skill.id && (
                 <ActivityIndicator
@@ -236,7 +258,7 @@ export const ClawHubBrowser: React.FC<ClawHubBrowserProps> = ({
                   styles.tileName,
                   { color: colors.textSecondary },
                 ]}
-                numberOfLines={1}
+                numberOfLines={2}
               >
                 {skill.name}
               </Text>

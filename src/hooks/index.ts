@@ -12,4 +12,5 @@ export { useMemoryFiles } from './useMemoryFiles';
 export { useCronRunHistory } from './useCronRunHistory';
 export { useClawHub } from './useClawHub';
 export { useNotifications } from './useNotifications';
+export { usePairedNodes } from './usePairedNodes';
 export { useColorScheme } from './useColorScheme';

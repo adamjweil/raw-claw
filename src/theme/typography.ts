@@ -31,7 +31,7 @@ export interface TypographyScale {
 }
 
 export const typography: TypographyScale = {
-  title: { fontSize: 28, fontWeight: '800', lineHeight: 34 },
+  title: { fontSize: 28, fontWeight: '600', lineHeight: 34 },
   heading: { fontSize: 16, fontWeight: '700', lineHeight: 22 },
   modalTitle: { fontSize: 22, fontWeight: '800', lineHeight: 28 },
   body: { fontSize: 15, fontWeight: '400', lineHeight: 22 },

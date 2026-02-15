@@ -54,7 +54,7 @@ However, most screens are currently populated with **hardcoded placeholder data*
 ### File Structure (Current)
 
 ```
-paw/
+rawclaw/
 ├── app/
 │   ├── _layout.tsx              # Root layout (StoreProvider + Stack)
 │   ├── settings.tsx             # Settings screen (modal)

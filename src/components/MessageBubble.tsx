@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ViewStyle, Pressable } from 'react-native';
 import Markdown from '@ronradtke/react-native-markdown-display';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, monoFont } from '../theme';
+import { useTheme } from '../theme';
+import { getMarkdownStyles } from '../theme/markdownStyles';
 import { Message } from '../types';
 import { ToolCallCard } from './ToolCallCard';
 
@@ -67,56 +68,41 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
 
   const textColor = isUser ? '#fff' : colors.textSecondary;
 
-  const mdStyles = {
-    body: { color: textColor, fontSize: typography.body.fontSize, lineHeight: 22 },
-    heading1: { color: isUser ? '#fff' : colors.text, fontSize: 20, fontWeight: '700' as const, marginBottom: 8 },
-    heading2: { color: isUser ? '#fff' : colors.text, fontSize: 18, fontWeight: '700' as const, marginBottom: 6 },
-    heading3: { color: isUser ? '#fff' : colors.text, fontSize: 16, fontWeight: '600' as const, marginBottom: 4 },
-    strong: { fontWeight: '700' as const, color: isUser ? '#fff' : colors.text },
-    em: { fontStyle: 'italic' as const },
-    code_inline: {
-      fontFamily: monoFont,
-      backgroundColor: isUser ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.3)',
-      color: isUser ? '#fff' : colors.accent,
-      paddingHorizontal: 4,
-      borderRadius: 3,
-      fontSize: 13,
-    },
-    code_block: {
-      fontFamily: monoFont,
-      backgroundColor: isUser ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.4)',
-      color: isUser ? '#ddd' : '#e2e8f0',
-      padding: 12,
-      borderRadius: 8,
-      fontSize: 13,
-      lineHeight: 20,
-    },
-    fence: {
-      fontFamily: monoFont,
-      backgroundColor: isUser ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.4)',
-      color: isUser ? '#ddd' : '#e2e8f0',
-      padding: 12,
-      borderRadius: 8,
-      fontSize: 13,
-      lineHeight: 20,
-    },
-    blockquote: {
-      borderLeftWidth: 3,
-      borderLeftColor: colors.accent,
-      paddingLeft: 12,
-      marginLeft: 0,
-      opacity: 0.85,
-    },
-    table: { borderWidth: 1, borderColor: colors.border },
-    th: { backgroundColor: 'rgba(255,255,255,0.05)', padding: 6 },
-    td: { padding: 6, borderWidth: 1, borderColor: colors.border },
-    tr: { borderBottomWidth: 1, borderColor: colors.border },
-    link: { color: colors.accent, textDecorationLine: 'underline' as const },
-    list_item: { marginBottom: 4 },
-    bullet_list: { marginBottom: 8 },
-    ordered_list: { marginBottom: 8 },
-    paragraph: { marginTop: 0, marginBottom: 8 },
-  };
+  const baseStyles = getMarkdownStyles(colors, typography);
+  const mdStyles = isUser
+    ? {
+        ...baseStyles,
+        body: { ...baseStyles.body, color: '#fff', lineHeight: 22 },
+        heading1: { ...baseStyles.heading1, color: '#fff', fontSize: 20, marginBottom: 8, marginTop: 0 },
+        heading2: { ...baseStyles.heading2, color: '#fff', fontSize: 18, marginBottom: 6, marginTop: 0 },
+        heading3: { ...baseStyles.heading3, color: '#fff', marginBottom: 4, marginTop: 0 },
+        strong: { ...baseStyles.strong, color: '#fff' },
+        code_inline: {
+          ...baseStyles.code_inline,
+          backgroundColor: 'rgba(255,255,255,0.15)',
+          color: '#fff',
+        },
+        code_block: { ...baseStyles.code_block, backgroundColor: 'rgba(0,0,0,0.2)', color: '#ddd' },
+        fence: { ...baseStyles.fence, backgroundColor: 'rgba(0,0,0,0.2)', color: '#ddd' },
+        table: { borderWidth: 1, borderColor: colors.border },
+        th: { backgroundColor: 'rgba(255,255,255,0.05)', padding: 6 },
+        td: { padding: 6, borderWidth: 1, borderColor: colors.border },
+        tr: { borderBottomWidth: 1, borderColor: colors.border },
+        bullet_list: { marginBottom: 8 },
+        ordered_list: { marginBottom: 8 },
+        paragraph: { marginTop: 0, marginBottom: 8 },
+      }
+    : {
+        ...baseStyles,
+        body: { ...baseStyles.body, lineHeight: 22 },
+        table: { borderWidth: 1, borderColor: colors.border },
+        th: { backgroundColor: 'rgba(255,255,255,0.05)', padding: 6 },
+        td: { padding: 6, borderWidth: 1, borderColor: colors.border },
+        tr: { borderBottomWidth: 1, borderColor: colors.border },
+        bullet_list: { marginBottom: 8 },
+        ordered_list: { marginBottom: 8 },
+        paragraph: { marginTop: 0, marginBottom: 8 },
+      };
 
   const categoryIcon = isAlert ? 'warning' : isAutomation ? 'hardware-chip' : undefined;
 
