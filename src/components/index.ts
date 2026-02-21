@@ -33,3 +33,4 @@ export { ActivityItem } from './ActivityItem';
 export { TokenBar } from './TokenBar';
 export { NotificationSummary } from './NotificationSummary';
 export { OfflineBanner } from './OfflineBanner';
+export { DemoBanner } from './DemoBanner';

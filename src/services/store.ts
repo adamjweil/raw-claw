@@ -2,6 +2,7 @@ import React, { createContext, useContext, useReducer, useCallback, useEffect, R
 import * as SecureStore from 'expo-secure-store';
 import { Message, CronJob, Skill, GatewayStatus, GatewayConfig, WSConnectionState, ChatSession } from '../types';
 import { GatewayClient } from './gateway';
+import { DemoGatewayClient } from './demoGateway';
 
 interface AppState {
   config: GatewayConfig;
@@ -15,6 +16,7 @@ interface AppState {
   thinking: boolean;
   activeSessionId: string | null;
   chatSessions: ChatSession[];
+  isDemoMode: boolean;
 }
 
 type Action =
@@ -32,7 +34,8 @@ type Action =
   | { type: 'SET_CHAT_SESSIONS'; sessions: ChatSession[] }
   | { type: 'ADD_CHAT_SESSION'; session: ChatSession }
   | { type: 'REMOVE_CHAT_SESSION'; sessionId: string }
-  | { type: 'UPDATE_CHAT_SESSION'; session: ChatSession };
+  | { type: 'UPDATE_CHAT_SESSION'; session: ChatSession }
+  | { type: 'SET_DEMO_MODE'; isDemoMode: boolean };
 
 const initialState: AppState = {
   config: { url: 'http://localhost:3000', token: '' },
@@ -46,6 +49,7 @@ const initialState: AppState = {
   thinking: false,
   activeSessionId: null,
   chatSessions: [],
+  isDemoMode: false,
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -94,6 +98,8 @@ function reducer(state: AppState, action: Action): AppState {
           s.id === action.session.id ? action.session : s
         ),
       };
+    case 'SET_DEMO_MODE':
+      return { ...state, isDemoMode: action.isDemoMode };
     default:
       return state;
   }
@@ -104,6 +110,8 @@ interface StoreContextType {
   dispatch: React.Dispatch<Action>;
   loadConfig: () => Promise<void>;
   saveConfig: (config: GatewayConfig) => Promise<void>;
+  activateDemoMode: () => void;
+  deactivateDemoMode: () => void;
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -166,6 +174,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [state.client, connectClient]
   );
 
+  const activateDemoMode = useCallback(() => {
+    if (state.client) {
+      state.client.disconnect();
+    }
+    const demoClient = new DemoGatewayClient();
+    dispatch({ type: 'SET_CLIENT', client: demoClient });
+    dispatch({ type: 'SET_DEMO_MODE', isDemoMode: true });
+    dispatch({ type: 'SET_ACTIVE_SESSION', sessionId: null });
+    dispatch({ type: 'SET_MESSAGES', messages: [] });
+    connectClient(demoClient);
+  }, [state.client, connectClient]);
+
+  const deactivateDemoMode = useCallback(() => {
+    if (state.client) {
+      state.client.disconnect();
+    }
+    dispatch({ type: 'SET_DEMO_MODE', isDemoMode: false });
+    dispatch({ type: 'SET_CLIENT', client: null as unknown as GatewayClient });
+    dispatch({ type: 'SET_WS_STATE', wsState: 'disconnected' });
+    dispatch({ type: 'SET_ACTIVE_SESSION', sessionId: null });
+    dispatch({ type: 'SET_MESSAGES', messages: [] });
+    dispatch({ type: 'SET_CHAT_SESSIONS', sessions: [] });
+  }, [state.client]);
+
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
@@ -181,7 +213,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return React.createElement(
     StoreContext.Provider,
-    { value: { state, dispatch, loadConfig, saveConfig } },
+    { value: { state, dispatch, loadConfig, saveConfig, activateDemoMode, deactivateDemoMode } },
     children
   );
 }

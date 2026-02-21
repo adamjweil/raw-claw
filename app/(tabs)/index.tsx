@@ -9,6 +9,7 @@ import { useTheme } from '../../src/theme';
 import { AnimatedCard, ScreenHeader, StatusPill, Row, EmptyState, ModelPicker, SkeletonCard } from '../../src/components';
 import { ActivityItem } from '../../src/components/ActivityItem';
 import { OfflineBanner } from '../../src/components/OfflineBanner';
+import { DemoBanner } from '../../src/components/DemoBanner';
 import { NotificationSummary } from '../../src/components/NotificationSummary';
 import { UsageChart } from '../../src/components/UsageChart';
 import { useGatewayStatus, useActivityFeed, useCronJobs, useTokenUsage, usePairedNodes, useIdentityName } from '../../src/hooks';
@@ -78,7 +79,7 @@ function getDeviceIcon(type: string): keyof typeof Ionicons.glyphMap {
 // ─── Home Screen ─────────────────────────────────────────────────────
 
 export default function Home() {
-  const { state, saveConfig } = useStore();
+  const { state, saveConfig, activateDemoMode } = useStore();
   const { colors, spacing, typography, radius } = useTheme();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -140,6 +141,25 @@ export default function Home() {
     Alert.alert('Saved', 'Gateway configuration updated.');
     setEditing(false);
   }, [editUrl, editToken, saveConfig]);
+
+  const handleDisconnect = useCallback(() => {
+    Alert.alert(
+      'Disconnect',
+      'Are you sure you want to disconnect from the gateway?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            state.client?.disconnect();
+            setEditing(false);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+          },
+        },
+      ]
+    );
+  }, [state.client]);
 
   // Latency measurement
   const [latency, setLatency] = useState<number | null>(null);
@@ -291,8 +311,9 @@ export default function Home() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
       >
-        {/* Offline banner */}
+        {/* Status banners */}
         <OfflineBanner />
+        <DemoBanner />
 
         {/* Header */}
         <ScreenHeader
@@ -313,6 +334,60 @@ export default function Home() {
             />
           }
         />
+
+        {/* ─── Disconnected Welcome ─────────────────────────────── */}
+        {!connected && !gatewayStatus.data && !state.status && (
+          <AnimatedCard title="Welcome" icon="rocket" delay={0}>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.body.fontSize,
+                lineHeight: 22,
+                marginBottom: spacing.md,
+              }}
+            >
+              Connect to an OpenClaw gateway to control your AI agent, or try demo mode to explore the app with sample data.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <Pressable
+                style={[
+                  styles.editTestBtn,
+                  {
+                    padding: spacing.sm + 2,
+                    borderRadius: radius.md,
+                    borderColor: colors.accent + '44',
+                    flex: 1,
+                  },
+                ]}
+                onPress={() => router.push('/settings')}
+                accessibilityRole="button"
+                accessibilityLabel="Configure gateway"
+              >
+                <Ionicons name="settings-outline" size={16} color={colors.accent} />
+                <Text style={{ color: colors.accent, fontSize: 14, fontWeight: '600' }}>
+                  Settings
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.editSaveBtn,
+                  {
+                    backgroundColor: colors.accent,
+                    borderRadius: radius.md,
+                    padding: spacing.sm + 2,
+                    flex: 1,
+                  },
+                ]}
+                onPress={activateDemoMode}
+                accessibilityRole="button"
+                accessibilityLabel="Try demo mode"
+              >
+                <Ionicons name="play-circle" size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Try Demo</Text>
+              </Pressable>
+            </View>
+          </AnimatedCard>
+        )}
 
         {/* ─── Gateway Status Card ──────────────────────────────── */}
         {gatewayStatus.loading && !gatewayStatus.data && !state.status ? (
@@ -450,6 +525,28 @@ export default function Home() {
                     <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Save</Text>
                   </Pressable>
                 </View>
+
+                {connected && (
+                  <Pressable
+                    style={[
+                      styles.editTestBtn,
+                      {
+                        marginTop: spacing.sm,
+                        padding: spacing.sm + 2,
+                        borderRadius: radius.md,
+                        borderColor: colors.error + '44',
+                      },
+                    ]}
+                    onPress={handleDisconnect}
+                    accessibilityRole="button"
+                    accessibilityLabel="Disconnect from gateway"
+                  >
+                    <Ionicons name="log-out-outline" size={16} color={colors.error} />
+                    <Text style={{ color: colors.error, fontSize: 14, fontWeight: '600' }}>
+                      Disconnect
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               <>
