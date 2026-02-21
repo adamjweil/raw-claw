@@ -2,7 +2,7 @@
   "expo": {
     "name": "RawClaw",
     "slug": "rawclaw",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -14,8 +14,15 @@
       "backgroundColor": "#0a0a0f"
     },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.adamweil.rawclaw"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.adamweil.rawclaw",
+      "buildNumber": "2",
+      "infoPlist": {
+        "NSCameraUsageDescription": "RawClaw needs camera access so you can take photos and attach them to your chat conversations.",
+        "NSMicrophoneUsageDescription": "RawClaw needs microphone access so you can record and send voice messages in chat.",
+        "NSPhotoLibraryUsageDescription": "RawClaw needs photo library access so you can select photos and videos to share in chat conversations.",
+        "NSFaceIDUsageDescription": "RawClaw uses Face ID to securely authenticate you when accessing the app."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -39,7 +46,21 @@
           "icon": "./assets/icon.png",
           "color": "#0ea5e9"
         }
-      ]
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "RawClaw needs photo library access so you can select photos and videos to share in chat conversations.",
+          "cameraPermission": "RawClaw needs camera access so you can take photos and attach them to your chat conversations."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "RawClaw needs microphone access so you can record and send voice messages in chat."
+        }
+      ],
+      "expo-audio"
     ]
   }
 }

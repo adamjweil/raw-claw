@@ -1,13 +1,11 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
-
-// Lazy-load expo-av so it doesn't crash in Expo Go where the native module is missing
-let Audio: typeof import('expo-av').Audio | null = null;
-try {
-  Audio = require('expo-av').Audio;
-} catch {
-  // Native module not available (e.g. running in Expo Go)
-}
+import {
+  useAudioRecorder,
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+} from 'expo-audio';
 
 interface UseVoiceInputResult {
   isRecording: boolean;
@@ -16,80 +14,66 @@ interface UseVoiceInputResult {
   cancelRecording: () => Promise<void>;
 }
 
-const NATIVE_UNAVAILABLE_MSG =
-  'Voice input requires a development build. It is not available in Expo Go.';
-
-/**
- * Voice input hook — records audio and returns the file URI.
- * Transcription would typically be handled by the gateway.
- * For now, we return the audio file URI so the caller can send it.
- */
 export function useVoiceInput(): UseVoiceInputResult {
   const [isRecording, setIsRecording] = useState(false);
-  const recordingRef = useRef<any>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isActiveRef = useRef(false);
 
   const startRecording = useCallback(async () => {
-    if (!Audio) {
-      Alert.alert('Unavailable', NATIVE_UNAVAILABLE_MSG);
-      return;
-    }
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+      if (!granted) {
         Alert.alert('Permission needed', 'Microphone permission is required for voice input');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      await recording.startAsync();
-      recordingRef.current = recording;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      isActiveRef.current = true;
       setIsRecording(true);
     } catch (err) {
       console.error('Failed to start recording:', err);
       Alert.alert('Error', 'Failed to start recording');
     }
-  }, []);
+  }, [recorder]);
 
   const stopRecording = useCallback(async (): Promise<string | null> => {
-    if (!Audio) return null;
     try {
-      if (!recordingRef.current) return null;
+      if (!isActiveRef.current) return null;
       setIsRecording(false);
-      await recordingRef.current.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
+      isActiveRef.current = false;
+      await recorder.stop();
+
+      await setAudioModeAsync({
+        allowsRecording: false,
       });
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
-      return uri;
+
+      return recorder.uri;
     } catch (err) {
       console.error('Failed to stop recording:', err);
-      recordingRef.current = null;
+      isActiveRef.current = false;
       setIsRecording(false);
       return null;
     }
-  }, []);
+  }, [recorder]);
 
   const cancelRecording = useCallback(async () => {
     try {
-      if (recordingRef.current) {
+      if (isActiveRef.current) {
         setIsRecording(false);
-        await recordingRef.current.stopAndUnloadAsync();
-        recordingRef.current = null;
+        isActiveRef.current = false;
+        await recorder.stop();
       }
     } catch {
-      recordingRef.current = null;
+      isActiveRef.current = false;
       setIsRecording(false);
     }
-  }, []);
+  }, [recorder]);
 
   return { isRecording, startRecording, stopRecording, cancelRecording };
 }

@@ -190,11 +190,11 @@ export class GatewayClient {
   private token: string;
   private ws: WebSocket | null = null;
   private pendingRequests: Map<string, PendingRequest> = new Map();
-  private messageHandlers: MessageHandler[] = [];
-  private wsStateHandlers: WSStateHandler[] = [];
-  private chatEventHandlers: ChatEventHandler[] = [];
-  private _wsState: WSConnectionState = 'disconnected';
-  private _isAuthenticated = false;
+  protected messageHandlers: MessageHandler[] = [];
+  protected wsStateHandlers: WSStateHandler[] = [];
+  protected chatEventHandlers: ChatEventHandler[] = [];
+  protected _wsState: WSConnectionState = 'disconnected';
+  protected _isAuthenticated = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = true;
@@ -256,7 +256,7 @@ export class GatewayClient {
     return this._isAuthenticated;
   }
 
-  private setWsState(state: WSConnectionState) {
+  protected setWsState(state: WSConnectionState) {
     this._wsState = state;
     this.wsStateHandlers.forEach((h) => h(state));
   }

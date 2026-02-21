@@ -113,7 +113,7 @@ function ThemeSelector() {
 // ─── Settings Screen ────────────────────────────────────────────────
 
 export default function Settings() {
-  const { state, saveConfig } = useStore();
+  const { state, saveConfig, activateDemoMode, deactivateDemoMode } = useStore();
   const { colors, spacing, radius, typography } = useTheme();
   const router = useRouter();
   const gatewayStatus = useGatewayStatus();
@@ -281,6 +281,50 @@ export default function Settings() {
               </Text>
             </Pressable>
           </View>
+
+          <View style={[styles.demoDivider, { marginVertical: spacing.lg, borderBottomColor: colors.border }]}>
+            <Text style={{ color: colors.textMuted, fontSize: typography.small.fontSize, textAlign: 'center' }}>
+              {state.isDemoMode ? 'Currently in Demo Mode' : "Don't have a gateway?"}
+            </Text>
+          </View>
+
+          <Pressable
+            style={[
+              styles.demoBtn,
+              {
+                padding: spacing.md,
+                borderRadius: radius.md,
+                borderColor: state.isDemoMode ? colors.error + '44' : colors.accent + '44',
+              },
+            ]}
+            onPress={() => {
+              if (state.isDemoMode) {
+                deactivateDemoMode();
+                Alert.alert('Demo Mode Off', 'Returned to normal mode.');
+              } else {
+                activateDemoMode();
+                router.back();
+              }
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={state.isDemoMode ? 'Exit demo mode' : 'Try demo mode'}
+          >
+            <Ionicons
+              name={state.isDemoMode ? 'close-circle' : 'play-circle'}
+              size={18}
+              color={state.isDemoMode ? colors.error : colors.accent}
+            />
+            <Text
+              style={{
+                color: state.isDemoMode ? colors.error : colors.accent,
+                fontSize: typography.body.fontSize,
+                fontWeight: '600',
+                marginLeft: 8,
+              }}
+            >
+              {state.isDemoMode ? 'Exit Demo' : 'Try Demo'}
+            </Text>
+          </Pressable>
         </Card>
 
         {/* ── Model ──────────────────────────────────────────── */}
@@ -434,4 +478,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   themeLabel: {},
+  demoDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 12,
+  },
+  demoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
 });
