@@ -17,6 +17,7 @@ import {
   WSConnectionState,
 } from '../types';
 import { cronToHuman } from '../utils/cronToHuman';
+import { getDeviceIdentity, DeviceSignParams } from './deviceIdentity';
 
 type MessageHandler = (message: Message) => void;
 type WSStateHandler = (state: WSConnectionState) => void;
@@ -363,19 +364,35 @@ export class GatewayClient {
     }
 
     try {
+      const clientId = 'openclaw-ios';
+      const clientMode = 'webchat';
+      const role = 'operator';
+      const scopes = ['operator.admin', 'operator.approvals', 'operator.pairing'];
+
+      const signParams: DeviceSignParams = {
+        clientId,
+        clientMode,
+        role,
+        scopes,
+        token: this.token || undefined,
+        nonce: this.connectNonce,
+      };
+      const identity = await getDeviceIdentity(signParams);
+
       const connectResult = await this.rpc<Record<string, unknown>>('connect', {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: 'openclaw-ios',
+          id: clientId,
           version: '1.0.0',
           platform: Platform.OS ?? 'mobile',
-          mode: 'webchat',
+          mode: clientMode,
           instanceId: uuid(),
         },
-        role: 'operator',
-        scopes: ['operator.admin', 'operator.approvals', 'operator.pairing'],
+        role,
+        scopes,
         auth: this.token ? { token: this.token } : undefined,
+        device: identity,
         caps: [],
       });
 
@@ -461,22 +478,89 @@ export class GatewayClient {
     return new Promise<boolean>((resolve) => {
       const wsUrl = this.wsUrl();
       const testWs = new WebSocket(wsUrl);
-      const timeout = setTimeout(() => {
+      let settled = false;
+      let challengeNonce: string | null = null;
+
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        testWs.onclose = null;
         testWs.close();
-        resolve(false);
-      }, 5_000);
+        resolve(ok);
+      };
+
+      const timeout = setTimeout(() => finish(false), 8_000);
+
+      const testClientId = 'openclaw-ios';
+      const testMode = 'webchat';
+      const testRole = 'operator';
+      const testScopes = ['operator.admin', 'operator.approvals', 'operator.pairing'];
+
+      const sendTestConnect = async () => {
+        try {
+          const signParams: DeviceSignParams = {
+            clientId: testClientId,
+            clientMode: testMode,
+            role: testRole,
+            scopes: testScopes,
+            token: this.token || undefined,
+            nonce: challengeNonce,
+          };
+          const identity = await getDeviceIdentity(signParams);
+          const id = uuid();
+          testWs.send(
+            JSON.stringify({
+              type: 'req',
+              id,
+              method: 'connect',
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: testClientId,
+                  version: '1.0.0',
+                  platform: Platform.OS ?? 'mobile',
+                  mode: testMode,
+                  instanceId: uuid(),
+                },
+                role: testRole,
+                scopes: testScopes,
+                auth: this.token ? { token: this.token } : undefined,
+                device: identity,
+                caps: [],
+              },
+            })
+          );
+        } catch {
+          finish(false);
+        }
+      };
 
       testWs.onopen = () => {
-        clearTimeout(timeout);
-        testWs.close();
-        resolve(true);
+        const connectDelay = setTimeout(() => sendTestConnect(), 750);
+
+        testWs.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(String(event.data ?? ''));
+            if (msg.type === 'event' && msg.event === 'connect.challenge') {
+              clearTimeout(connectDelay);
+              const payload = msg.payload as Record<string, unknown> | undefined;
+              challengeNonce =
+                payload && typeof payload.nonce === 'string' ? payload.nonce : null;
+              sendTestConnect();
+              return;
+            }
+            if (msg.type === 'res') {
+              finish(!!msg.ok);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        };
       };
 
-      testWs.onerror = () => {
-        clearTimeout(timeout);
-        testWs.close();
-        resolve(false);
-      };
+      testWs.onerror = () => finish(false);
     });
   }
 
